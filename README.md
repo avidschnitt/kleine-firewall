@@ -7,14 +7,15 @@ Windows-Firewall, kein eigener Treiber.
 
 ## Herunterladen
 
-Rechts auf **Releases** klicken und bei der neuesten Version `KleineFirewall.exe`
-herunterladen. Die Versionsnummer steht im Fenster neben dem Namen.
+Rechts auf **Releases** klicken und bei der neuesten Version die Datei
+`KleineFirewall-<Nummer>.exe` herunterladen. Die Versionsnummer steht im Fenster neben dem Namen.
 
 Die EXE ist nicht signiert: Windows zeigt beim ersten Start eine Warnung
 ("Weitere Informationen" -> "Trotzdem ausfuehren").
 
 ## Versionen
 
+- **1.6** - Versionsnummer im Dateinamen (`KleineFirewall-1.6.exe`); Autostart folgt der neuen Datei.
 - **1.5** - Rechtsklick auf das Taskleisten-Symbol zeigt ein Menue mit "Oeffnen" und "Beenden".
 - **1.4** - es gibt nur noch ein Fenster; ein offenes wird nach vorn geholt statt neu geoeffnet.
 - **1.3** - Fenster oeffnet sich in der richtigen Groesse (war winzig bzw. riesig).
@@ -36,5 +37,5 @@ Gut zu wissen:
 - Laeuft das Programm nicht, bleibt Neues gesperrt, aber niemand fragt -
   dafuer gibt es den Haken "Mit Windows starten".
 - Alles rueckgaengig: Knopf "Alles zuruecksetzen" oder
-  `KleineFirewall.exe --zuruecksetzen`.
-- Nur ansehen, ohne etwas zu veraendern: `KleineFirewall.exe --demo`.
+  `KleineFirewall-<Nummer>.exe --zuruecksetzen`.
+- Nur ansehen, ohne etwas zu veraendern: `KleineFirewall-<Nummer>.exe --demo`.

@@ -30,7 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "KleineFirewall"
-VERSION = "1.5"
+VERSION = "1.6"
 PORT = 47615
 TASK = "KleineFirewall"
 # Windows-Protokollkategorie "Filterplattformverbindung" (sprachunabhaengige Kennung)
@@ -1137,6 +1137,12 @@ def main():
             system.enable_log()
         except SysError as e:
             guard.error = str(e)
+    if not system.demo:
+        try:  # Dateiname enthaelt die Versionsnummer -> Autostart auf diese Datei umstellen
+            if system.autostart():
+                system.set_autostart(True)
+        except SysError:
+            pass
     threading.Thread(target=guard.watch, daemon=True).start()
     tray = None if system.demo else Tray(guard)
     if tray:

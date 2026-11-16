@@ -14,15 +14,15 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pyinstaller
-      - run: pyinstaller --onefile --noconsole --uac-admin --name KleineFirewall kleinefirewall_windows.py
       - name: Version lesen
         id: v
         shell: bash
         run: echo "nr=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' kleinefirewall_windows.py)" >> "$GITHUB_OUTPUT"
+      - run: pyinstaller --onefile --noconsole --uac-admin --name KleineFirewall-${{ steps.v.outputs.nr }} kleinefirewall_windows.py
       - uses: actions/upload-artifact@v4
         with:
-          name: KleineFirewall-v${{ steps.v.outputs.nr }}
-          path: dist/KleineFirewall.exe
+          name: KleineFirewall-${{ steps.v.outputs.nr }}
+          path: dist/KleineFirewall-${{ steps.v.outputs.nr }}.exe
       - name: Als Version veroeffentlichen
         if: github.ref == 'refs/heads/main'
         shell: bash
@@ -30,5 +30,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="v${{ steps.v.outputs.nr }}"
-          gh release create "$tag" dist/KleineFirewall.exe --title "Kleine Firewall $tag" --notes "Automatisch gebaut." \
-            || gh release upload "$tag" dist/KleineFirewall.exe --clobber
+          exe="dist/KleineFirewall-${{ steps.v.outputs.nr }}.exe"
+          gh release create "$tag" "$exe" --title "Kleine Firewall $tag" --notes "Automatisch gebaut." \
+            || gh release upload "$tag" "$exe" --clobber
