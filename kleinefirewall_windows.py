@@ -30,7 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "KleineFirewall"
-VERSION = "1.3"
+VERSION = "1.4"
 PORT = 47615
 TASK = "KleineFirewall"
 # Windows-Protokollkategorie "Filterplattformverbindung" (sprachunabhaengige Kennung)
@@ -225,19 +225,7 @@ class WinSystem:
         """Eigenes App-Fenster um (dw, dh) Seiten-Pixel groesser oder kleiner machen."""
         from ctypes import wintypes as w
         u = ctypes.windll.user32
-        found = []
-
-        def each(hwnd, _):
-            title, cls = ctypes.create_unicode_buffer(200), ctypes.create_unicode_buffer(80)
-            u.GetWindowTextW(w.HWND(hwnd), title, 200)
-            u.GetClassNameW(w.HWND(hwnd), cls, 80)
-            if title.value.endswith("Kleine Firewall") and cls.value.startswith("Chrome_WidgetWin") \
-                    and u.IsWindowVisible(w.HWND(hwnd)):
-                found.append(hwnd)
-            return True
-
-        proc = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)(each)
-        u.EnumWindows(proc, 0)
+        found = app_windows()
         max_h = int((u.GetSystemMetrics(1) or 2000) * 0.92)
         for hwnd in found:
             hwnd = w.HWND(hwnd)
@@ -1009,8 +997,40 @@ class Tray:
 
 # ---------------------------------------------------------------- Start
 
+def app_windows():
+    """Bereits offene Fenster dieser Oberflaeche (nur das eigene App-Fenster, kein Browser-Tab)."""
+    if platform.system() != "Windows":
+        return []
+    from ctypes import wintypes as w
+    u = ctypes.windll.user32
+    found = []
+
+    def each(hwnd, _):
+        title, cls = ctypes.create_unicode_buffer(200), ctypes.create_unicode_buffer(80)
+        u.GetWindowTextW(w.HWND(hwnd), title, 200)
+        u.GetClassNameW(w.HWND(hwnd), cls, 80)
+        if title.value.endswith("Kleine Firewall") and cls.value.startswith("Chrome_WidgetWin") \
+                and u.IsWindowVisible(w.HWND(hwnd)):
+            found.append(hwnd)
+        return True
+
+    try:
+        u.EnumWindows(ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)(each), 0)
+    except Exception:
+        pass
+    return found
+
+
 def open_ui(url):
-    """Als kleines App-Fenster oeffnen (Edge ist bei Windows dabei), sonst im Standardbrowser."""
+    """Als kleines App-Fenster oeffnen (Edge ist bei Windows dabei), sonst im Standardbrowser.
+    Ist das Fenster schon offen, wird es nur nach vorn geholt - es gibt immer nur eins."""
+    for hwnd in app_windows()[:1]:
+        from ctypes import wintypes as w
+        u = ctypes.windll.user32
+        if u.IsIconic(w.HWND(hwnd)):
+            u.ShowWindow(w.HWND(hwnd), 9)
+        u.SetForegroundWindow(w.HWND(hwnd))
+        return
     for base in (os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles")):
         edge = os.path.join(base or "", "Microsoft", "Edge", "Application", "msedge.exe")
         if base and os.path.exists(edge):
@@ -1093,6 +1113,9 @@ def main():
     if tray:
         tray.start()
     say("Kleine Firewall laeuft. Oberflaeche:\n  " + url)
+    for hwnd in app_windows():  # Fenster eines frueheren Laufs schliessen - sie sind nicht mehr verbunden
+        ctypes.windll.user32.PostMessageW(ctypes.c_void_p(hwnd), 0x0010, 0, 0)
+        time.sleep(0.3)
     if not args.hintergrund:
         open_ui(url)
     try:
