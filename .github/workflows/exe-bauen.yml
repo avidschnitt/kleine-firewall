@@ -1,0 +1,19 @@
+name: EXE bauen
+on:
+  push:
+    paths: ["kleinefirewall_windows.py", ".github/workflows/exe-bauen.yml"]
+  workflow_dispatch:
+jobs:
+  bauen:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyinstaller
+      - run: pyinstaller --onefile --noconsole --uac-admin --name KleineFirewall kleinefirewall_windows.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KleineFirewall
+          path: dist/KleineFirewall.exe
