@@ -30,7 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "KleineFirewall"
-VERSION = "1.2"
+VERSION = "1.3"
 PORT = 47615
 TASK = "KleineFirewall"
 # Windows-Protokollkategorie "Filterplattformverbindung" (sprachunabhaengige Kennung)
@@ -221,6 +221,37 @@ class WinSystem:
         except Exception:
             return {}
 
+    def resize_window(self, dw, dh, dpr):
+        """Eigenes App-Fenster um (dw, dh) Seiten-Pixel groesser oder kleiner machen."""
+        from ctypes import wintypes as w
+        u = ctypes.windll.user32
+        found = []
+
+        def each(hwnd, _):
+            title, cls = ctypes.create_unicode_buffer(200), ctypes.create_unicode_buffer(80)
+            u.GetWindowTextW(w.HWND(hwnd), title, 200)
+            u.GetClassNameW(w.HWND(hwnd), cls, 80)
+            if title.value.endswith("Kleine Firewall") and cls.value.startswith("Chrome_WidgetWin") \
+                    and u.IsWindowVisible(w.HWND(hwnd)):
+                found.append(hwnd)
+            return True
+
+        proc = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)(each)
+        u.EnumWindows(proc, 0)
+        max_h = int((u.GetSystemMetrics(1) or 2000) * 0.92)
+        for hwnd in found:
+            hwnd = w.HWND(hwnd)
+            if u.IsIconic(hwnd):
+                continue
+            if u.IsZoomed(hwnd):
+                u.ShowWindow(hwnd, 9)  # aus dem Vollbild zurueckholen
+            rect = w.RECT()
+            if not u.GetWindowRect(hwnd, ctypes.byref(rect)):
+                continue
+            width = max(120, rect.right - rect.left + round(dw * dpr))
+            height = min(max_h, max(100, rect.bottom - rect.top + round(dh * dpr)))
+            u.SetWindowPos(hwnd, None, 0, 0, width, height, 0x0002 | 0x0004 | 0x0010)  # nicht verschieben
+
     def host_name(self, addr):
         try:
             return socket.gethostbyaddr(addr)[0]
@@ -277,6 +308,7 @@ class DemoSystem:
     def autostart(self): return self._auto
     def set_autostart(self, on): self._auto = on
     def reset(self, paths): pass
+    def resize_window(self, dw, dh, dpr): pass
 
     def file_info(self, path):
         return {"firefox.exe": {"company": "Mozilla Corporation", "desc": "Firefox"},
@@ -446,7 +478,7 @@ PAGE = r"""<!doctype html>
 @media (prefers-color-scheme:dark){:root{--bg:#1c1e22;--card:#26292e;--text:#e4e6ea;--muted:#9aa0a9;--line:#3a3e45;
 --accent:#aeb4be;--ok:#3f7352;--bad:#8f4741}}
 *{box-sizing:border-box}
-html{overflow:hidden}
+html{overflow-x:hidden;scrollbar-width:thin}
 body{margin:0;background:var(--bg);color:var(--text);font:11.5px/1.3 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{width:300px;margin:0 auto;padding:7px}
 header{display:flex;align-items:center;gap:6px;margin-bottom:5px}
@@ -577,13 +609,16 @@ function where(p){
 
 let scale = 0;
 function setScale(v){ if(v != scale){ scale = v; document.querySelector("main").style.zoom = v; fit(); } }
-function fit(){  // Fenster auf die Groesse des Inhalts bringen (wirkt nur im eigenen App-Fenster)
-  try{
-    const box = document.querySelector("main").getBoundingClientRect();
-    const w = Math.ceil(300 * scale) + (outerWidth - innerWidth);
-    const h = Math.min(screen.availHeight - 40, Math.ceil(box.height) + (outerHeight - innerHeight) + 2);
-    if(Math.abs(outerWidth - w) > 2 || Math.abs(outerHeight - h) > 2) window.resizeTo(w, h);
-  }catch(e){}
+let fitGoal = "", fitTries = 0, fitBusy = false;
+function fit(){  // dem Programm melden, um wie viel das Fenster vom Inhalt abweicht - es stellt die Groesse dann ein
+  if(document.hidden || fitBusy || !scale) return;
+  const box = document.querySelector("main").getBoundingClientRect();
+  const w = Math.ceil(300 * scale), h = Math.ceil(box.height) + 1, goal = w + "x" + h;
+  if(goal != fitGoal){ fitGoal = goal; fitTries = 0; }
+  const dw = w - innerWidth, dh = h - innerHeight;
+  if((Math.abs(dw) <= 2 && Math.abs(dh) <= 2) || fitTries >= 4) return;
+  fitTries++; fitBusy = true;
+  api("size", {dw, dh, dpr: devicePixelRatio}).catch(() => {}).finally(() => setTimeout(() => { fitBusy = false; fit(); }, 400));
 }
 function step(d){ const v = Math.min(1.5, Math.max(0.5, Math.round((scale + d) * 10) / 10)); act("scale", {scale: v}); }
 
@@ -665,7 +700,7 @@ $("quit").onclick = async () => {
   if(!confirm("Beenden? Deine Regeln bleiben aktiv, aber du wirst nicht mehr gefragt – Neues bleibt gesperrt.")) return;
   try{ await api("quit", {}); }catch(e){} bye("Kleine Firewall wurde beendet. Deine Regeln bleiben aktiv."); };
 function bye(text){ clearInterval(timer); document.querySelector("main").replaceChildren(el("div", "card empty", text)); }
-const tick = () => api("state").then(show).catch(() => {});
+const tick = () => api("state").then(s => { show(s); fit(); }).catch(() => {});
 const timer = setInterval(tick, 1500); tick();
 </script></body></html>
 """
@@ -724,6 +759,10 @@ def make_server(guard, token, port):
                     with guard.lock:
                         guard.state["scale"] = min(1.5, max(0.5, round(float(body.get("scale")), 1)))
                         guard.save()
+                elif self.path == "/api/size":
+                    guard.sys.resize_window(float(body.get("dw", 0)), float(body.get("dh", 0)),
+                                            min(4.0, max(0.5, float(body.get("dpr", 1)))))
+                    return self._send(200, {})
                 elif self.path == "/api/autostart":
                     guard.sys.set_autostart(bool(body.get("on")))
                 elif self.path in ("/api/reset", "/api/quit"):
@@ -1015,6 +1054,10 @@ def main():
             params = subprocess.list2cmdline(own + sys.argv[1:])
             ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
             return 0
+        try:  # mit echten Bildschirm-Pixeln arbeiten, egal welche Skalierung Windows nutzt
+            ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+        except Exception:
+            pass
         state_dir = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / APP
         state_dir.mkdir(parents=True, exist_ok=True)
         system = WinSystem(state_dir)

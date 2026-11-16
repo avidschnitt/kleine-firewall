@@ -15,6 +15,7 @@ Die EXE ist nicht signiert: Windows zeigt beim ersten Start eine Warnung
 
 ## Versionen
 
+- **1.3** - Fenster oeffnet sich in der richtigen Groesse (war winzig bzw. riesig).
 - **1.2** - kleineres, ruhigeres Fenster; Groesse mit A-/A+ einstellbar;
   Fenster passt sich dem Inhalt an; Versionsnummer sichtbar.
 - **1.1** - mehr Angaben zu jeder Anfrage (Hersteller, Ziel, Port, Datei).
