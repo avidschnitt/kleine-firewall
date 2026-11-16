@@ -23,10 +23,11 @@ jobs:
       - name: Dateien wie nach einem Download markieren
         shell: pwsh
         run: |
-          Get-ChildItem "dist\KleineFirewall-${{ steps.v.outputs.nr }}" -Recurse -File | ForEach-Object {
+          Get-ChildItem "dist\KleineFirewall-${{ steps.v.outputs.nr }}" -Recurse -File | Where-Object { $_.Extension -ne ".exe" } | ForEach-Object {
             Set-Content -LiteralPath $_.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3"
           }
       - name: Selbsttest
+        timeout-minutes: 6
         shell: pwsh
         run: |
           $exe = "dist\KleineFirewall-${{ steps.v.outputs.nr }}\KleineFirewall-${{ steps.v.outputs.nr }}.exe"
