@@ -222,25 +222,6 @@ class WinSystem:
         except Exception:
             return {}
 
-    def resize_window(self, dw, dh, dpr):
-        """Eigenes App-Fenster um (dw, dh) Seiten-Pixel groesser oder kleiner machen."""
-        from ctypes import wintypes as w
-        u = ctypes.windll.user32
-        found = app_windows()
-        max_h = int((u.GetSystemMetrics(1) or 2000) * 0.92)
-        for hwnd in found:
-            hwnd = w.HWND(hwnd)
-            if u.IsIconic(hwnd):
-                continue
-            if u.IsZoomed(hwnd):
-                u.ShowWindow(hwnd, 9)  # aus dem Vollbild zurueckholen
-            rect = w.RECT()
-            if not u.GetWindowRect(hwnd, ctypes.byref(rect)):
-                continue
-            width = max(120, rect.right - rect.left + round(dw * dpr))
-            height = min(max_h, max(100, rect.bottom - rect.top + round(dh * dpr)))
-            u.SetWindowPos(hwnd, None, 0, 0, width, height, 0x0002 | 0x0004 | 0x0010)  # nicht verschieben
-
     def host_name(self, addr):
         try:
             return socket.gethostbyaddr(addr)[0]
@@ -297,7 +278,6 @@ class DemoSystem:
     def autostart(self): return self._auto
     def set_autostart(self, on): self._auto = on
     def reset(self, paths): pass
-    def resize_window(self, dw, dh, dpr): pass
 
     def file_info(self, path):
         return {"firefox.exe": {"company": "Mozilla Corporation", "desc": "Firefox"},
@@ -750,7 +730,7 @@ def make_server(guard, token, port):
                         guard.state["scale"] = min(1.5, max(0.5, round(float(body.get("scale")), 1)))
                         guard.save()
                 elif self.path == "/api/size":
-                    guard.sys.resize_window(float(body.get("dw", 0)), float(body.get("dh", 0)),
+                    resize_window(float(body.get("dw", 0)), float(body.get("dh", 0)),
                                             min(4.0, max(0.5, float(body.get("dpr", 1)))))
                     return self._send(200, {})
                 elif self.path == "/api/autostart":
@@ -1073,6 +1053,28 @@ def app_windows(detail=None):
     except Exception:
         pass
     return found
+
+
+def resize_window(dw, dh, dpr):
+    """Eigenes App-Fenster um (dw, dh) Seiten-Pixel groesser oder kleiner machen."""
+    if platform.system() != "Windows":
+        return
+    from ctypes import wintypes as w
+    u = ctypes.windll.user32
+    found = app_windows()
+    max_h = int((u.GetSystemMetrics(1) or 2000) * 0.92)
+    for hwnd in found:
+        hwnd = w.HWND(hwnd)
+        if u.IsIconic(hwnd):
+            continue
+        if u.IsZoomed(hwnd):
+            u.ShowWindow(hwnd, 9)  # aus dem Vollbild zurueckholen
+        rect = w.RECT()
+        if not u.GetWindowRect(hwnd, ctypes.byref(rect)):
+            continue
+        width = max(120, rect.right - rect.left + round(dw * dpr))
+        height = min(max_h, max(100, rect.bottom - rect.top + round(dh * dpr)))
+        u.SetWindowPos(hwnd, None, 0, 0, width, height, 0x0002 | 0x0004 | 0x0010)  # nicht verschieben
 
 
 def open_ui(url):
