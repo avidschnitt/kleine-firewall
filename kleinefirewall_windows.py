@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "KleineFirewall"
-VERSION = "2.2"
+VERSION = "2.3"
 PORT = 47615
 TASK = "KleineFirewall"
 # Windows-Protokollkategorie "Filterplattformverbindung" (sprachunabhaengige Kennung)
@@ -57,6 +57,22 @@ def log(text):
                 f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + str(text) + "\n")
     except OSError:
         pass
+
+
+def unblock_files():
+    """Windows markiert heruntergeladene Dateien als 'aus dem Internet' und verweigert dann das Laden
+    der Fenster-Komponente. Die Markierung von den eigenen Programmdateien entfernen."""
+    if not getattr(sys, "frozen", False):
+        return
+    count = 0
+    for root, _, files in os.walk(os.path.dirname(sys.executable)):
+        for name in files:
+            try:
+                os.remove(os.path.join(root, name) + ":Zone.Identifier")
+                count += 1
+            except OSError:
+                pass
+    log(f"Internet-Markierung von {count} Dateien entfernt")
 
 
 def message(text):
@@ -1279,6 +1295,7 @@ def run():
     ui_file = state_dir / "ui.json"
     LOG["file"] = state_dir / "log.txt"
     log(f"Start Version {VERSION} {sys.argv[1:]} aus {sys.executable}")
+    unblock_files()
     threading.excepthook = lambda a: log("Fehler in Nebenaufgabe: " + "".join(
         traceback.format_exception(a.exc_type, a.exc_value, a.exc_traceback))[-1500:])
     if args.zuruecksetzen:
@@ -1362,6 +1379,7 @@ def run():
         threading.Thread(target=selftest, args=(args.selbsttest, guard, tray), daemon=True).start()
 
     started = False
+    loop = {"ran": False}
     if on_windows and not args.browser and webview2_version():
         try:  # eigenes Programmfenster
             import webview
@@ -1377,13 +1395,14 @@ def run():
             NATIVE["window"] = win
             started = True
             log("Eigenes Fenster wird geoeffnet")
-            webview.start()  # kehrt zurueck, wenn das Fenster endgueltig geschlossen wird
+            webview.start(lambda: loop.update(ran=True))  # kehrt zurueck, wenn das Fenster endgueltig geschlossen wird
         except Exception as e:
             log("Eigenes Fenster: " + traceback.format_exc()[-1500:])
             NATIVE["window"] = None
-            if started:
+            if loop["ran"]:
                 done.set()
-            else:
+            else:  # Fenster kam gar nicht zustande -> Anzeige ueber den Browser
+                started = False
                 guard.tray_error = f"Eigenes Fenster nicht verfuegbar ({e}) - Anzeige im Browser."
     if not started:
         log("Anzeige ueber Browser")

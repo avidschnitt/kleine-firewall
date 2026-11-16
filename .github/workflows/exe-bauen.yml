@@ -20,6 +20,12 @@ jobs:
         run: echo "nr=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' kleinefirewall_windows.py)" >> "$GITHUB_OUTPUT"
       # Als Ordner statt als eine sich selbst entpackende Datei: loest seltener Fehlalarme bei Virenscannern aus
       - run: pyinstaller --onedir --noconsole --uac-admin --name KleineFirewall-${{ steps.v.outputs.nr }} kleinefirewall_windows.py
+      - name: Dateien wie nach einem Download markieren
+        shell: pwsh
+        run: |
+          Get-ChildItem "dist\KleineFirewall-${{ steps.v.outputs.nr }}" -Recurse -File | ForEach-Object {
+            Set-Content -LiteralPath $_.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3"
+          }
       - name: Selbsttest
         shell: pwsh
         run: |

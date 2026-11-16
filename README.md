@@ -17,6 +17,7 @@ Die EXE ist nicht signiert: Windows zeigt beim ersten Start eine Warnung
 
 ## Versionen
 
+- **2.3** - eigenes Fenster startet auch nach dem Entpacken eines heruntergeladenen ZIP; sonst Anzeige ueber den Browser.
 - **2.2** - loest eine noch laufende aeltere Version selbst ab; zeigt eine Meldung statt stumm zu scheitern; schreibt ein Protokoll.
 - **2.1** - als Ordner im ZIP statt als einzelne EXE (weniger Fehlalarme bei Virenscannern); jeder Build wird mit Windows Defender geprueft.
 - **2.0** - eigenes Programmfenster statt Browser; Schliessen-Kreuz blendet es nur aus, das Programm laeuft in der Taskleiste weiter.
