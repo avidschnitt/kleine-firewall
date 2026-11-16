@@ -3,6 +3,8 @@ on:
   push:
     paths: ["kleinefirewall_windows.py", ".github/workflows/exe-bauen.yml"]
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   bauen:
     runs-on: windows-latest
@@ -13,7 +15,20 @@ jobs:
           python-version: "3.12"
       - run: pip install pyinstaller
       - run: pyinstaller --onefile --noconsole --uac-admin --name KleineFirewall kleinefirewall_windows.py
+      - name: Version lesen
+        id: v
+        shell: bash
+        run: echo "nr=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' kleinefirewall_windows.py)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
-          name: KleineFirewall
+          name: KleineFirewall-v${{ steps.v.outputs.nr }}
           path: dist/KleineFirewall.exe
+      - name: Als Version veroeffentlichen
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${{ steps.v.outputs.nr }}"
+          gh release create "$tag" dist/KleineFirewall.exe --title "Kleine Firewall $tag" --notes "Automatisch gebaut." \
+            || gh release upload "$tag" dist/KleineFirewall.exe --clobber

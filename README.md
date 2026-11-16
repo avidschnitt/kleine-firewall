@@ -7,12 +7,18 @@ Windows-Firewall, kein eigener Treiber.
 
 ## Herunterladen
 
-Oben auf **Actions** klicken, den neuesten Lauf "EXE bauen" oeffnen und unten
-unter **Artifacts** `KleineFirewall` herunterladen. Die ZIP-Datei enthaelt
-`KleineFirewall.exe`.
+Rechts auf **Releases** klicken und bei der neuesten Version `KleineFirewall.exe`
+herunterladen. Die Versionsnummer steht im Fenster neben dem Namen.
 
 Die EXE ist nicht signiert: Windows zeigt beim ersten Start eine Warnung
 ("Weitere Informationen" -> "Trotzdem ausfuehren").
+
+## Versionen
+
+- **1.2** - kleineres, ruhigeres Fenster; Groesse mit A-/A+ einstellbar;
+  Fenster passt sich dem Inhalt an; Versionsnummer sichtbar.
+- **1.1** - mehr Angaben zu jeder Anfrage (Hersteller, Ziel, Port, Datei).
+- **1.0** - erste Version mit Fragen-Modus, Listen und Taskleisten-Anzeige.
 
 ## Bedienung
 

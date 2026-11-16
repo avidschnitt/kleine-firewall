@@ -30,6 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "KleineFirewall"
+VERSION = "1.2"
 PORT = 47615
 TASK = "KleineFirewall"
 # Windows-Protokollkategorie "Filterplattformverbindung" (sprachunabhaengige Kennung)
@@ -362,7 +363,7 @@ class Guard:
     def reset(self):
         with self.lock:
             self.sys.reset([p["path"] for p in self.state["programs"].values()])
-            self.state = {"mode": None, "programs": {}}
+            self.state = {"mode": None, "programs": {}, "scale": self.state.get("scale")}
             self.pending.clear()
             self.save()
 
@@ -371,7 +372,7 @@ class Guard:
             progs = sorted(self.state["programs"].values(), key=lambda p: nice_name(p["path"]).lower())
             view = lambda p: {"path": p["path"], "name": nice_name(p["path"]), "dirs": p.get("dirs", [])}
             return {
-                "mode": self.state["mode"], "demo": self.sys.demo, "error": self.error or self.tray_error, "net": self.net,
+                "mode": self.state["mode"], "demo": self.sys.demo, "scale": self.state.get("scale"), "error": self.error or self.tray_error, "net": self.net,
                 "pending": sorted(self.pending.values(), key=lambda p: p["first"]),
                 "allowed": [view(p) for p in progs if p["action"] == "allow"],
                 "blocked": [view(p) for p in progs if p["action"] == "block"],
@@ -440,76 +441,71 @@ PAGE = r"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kleine Firewall</title>
 <style>
-:root{--bg:#b9bdc4;--card:#d3d6db;--text:#14181e;--muted:#454b55;--line:#a3a8b1;--accent:#1d4ed8;--accentbg:#c3cff0;
---ok:#146c35;--okbg:#bfdcc9;--bad:#a11f15;--badbg:#e6c4c0;--warnbg:#e3d5a4;--warn:#553a00;--shadow:0 1px 2px rgba(16,24,40,.12)}
-@media (prefers-color-scheme:dark){:root{--bg:#11141a;--card:#1a1f28;--text:#e9ecf2;--muted:#98a2b3;--line:#2b3240;
---accent:#6ea0ff;--accentbg:#1c2a4a;--ok:#62d394;--okbg:#153324;--bad:#ff8f85;--badbg:#3a1b19;--warnbg:#3a2f12;--warn:#f2c661;--shadow:none}}
+:root{--bg:#c2c5ca;--card:#d2d4d8;--text:#1b1e23;--muted:#565c65;--line:#a8acb3;--accent:#3c4450;
+--ok:#1d6436;--bad:#96281f}
+@media (prefers-color-scheme:dark){:root{--bg:#1c1e22;--card:#26292e;--text:#e4e6ea;--muted:#9aa0a9;--line:#3a3e45;
+--accent:#aeb4be;--ok:#7cc796;--bad:#e89088}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font:12.5px/1.3 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:340px;margin:0 auto;padding:8px}
-header{display:flex;align-items:center;gap:7px;margin-bottom:6px}
+html{overflow:hidden}
+body{margin:0;background:var(--bg);color:var(--text);font:11.5px/1.3 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{width:300px;margin:0 auto;padding:7px}
+header{display:flex;align-items:center;gap:6px;margin-bottom:5px}
 header svg{flex:none}
-h1{font-size:13px;margin:0}
-#sub{color:var(--muted);font-size:11px}
-h2{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:9px 2px 3px;font-weight:700}
-#net{font-size:10.5px;color:var(--muted);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
-#net i{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:4px}
-#net .o{background:#c44fd6}#net .i{background:#3b82f6}
-.card{background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)}
-button{font:inherit;cursor:pointer;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--text);padding:3px 8px}
-button:hover{border-color:var(--accent)}
-button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-.btn-ok{background:var(--ok);border-color:var(--ok);color:#fff;font-weight:600}
-.btn-bad{background:var(--bad);border-color:var(--bad);color:#fff;font-weight:600}
-@media (prefers-color-scheme:dark){.btn-ok,.btn-bad{color:#10141a}}
-.btn-big{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;padding:6px 14px}
-.link{border:0;background:none;color:var(--muted);padding:2px 5px;font-size:11px}
+h1{font-size:12px;margin:0}
+h1 small{font-weight:400;color:var(--muted);font-size:10px;margin-left:4px}
+#sub{color:var(--muted);font-size:10.5px}
+h2{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:8px 2px 3px;font-weight:700}
+#net{white-space:pre;font-size:10px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+.card{background:var(--card);border:1px solid var(--line);border-radius:6px}
+button{font:inherit;cursor:pointer;border-radius:5px;border:1px solid var(--line);background:none;color:var(--text);padding:2px 7px}
+button:hover{border-color:var(--text)}
+button:focus-visible{outline:2px solid var(--text);outline-offset:1px}
+.btn-ok{border-color:var(--ok);color:var(--ok);font-weight:600}
+.btn-bad{border-color:var(--bad);color:var(--bad);font-weight:600}
+.btn-big{background:var(--accent);border-color:var(--accent);color:var(--card);font-weight:600;padding:5px 12px}
+.link{border:0;color:var(--muted);padding:2px 4px;font-size:10.5px}
 .link:hover{color:var(--text)}
-.modes{display:flex;background:var(--card);border:1px solid var(--line);border-radius:7px;padding:2px;gap:2px}
-.mode{flex:1;border:0;background:none;padding:4px 2px;font-weight:600;font-size:11.5px;color:var(--muted);white-space:nowrap}
-.mode.sel{background:var(--accent);color:#fff}
-@media (prefers-color-scheme:dark){.mode.sel{color:#10141a}}
+.modes{display:flex;border:1px solid var(--line);border-radius:6px;padding:2px;gap:2px}
+.mode{flex:1;border:0;padding:3px 2px;font-size:11px;color:var(--muted);white-space:nowrap}
+.mode.sel{background:var(--accent);color:var(--card);font-weight:600}
 .req{padding:6px 7px;margin-bottom:4px}
-.top{display:flex;gap:7px;align-items:center}
-.av{flex:none;width:24px;height:24px;border-radius:6px;color:#fff;font-weight:700;font-size:12px;display:grid;place-items:center}
 .info{flex:1;min-width:0}
 .info>*{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.info b{font-size:12.5px;display:block}
-.info .path{font-size:10.5px;color:var(--muted)}
-.facts{margin:5px 0 6px;font-size:11px;display:grid;grid-template-columns:auto 1fr;gap:1px 7px}
+.info b{font-size:12px;display:block}
+.info .path{font-size:10px;color:var(--muted)}
+.facts{margin:4px 0 6px;font-size:10.5px;display:grid;grid-template-columns:auto 1fr;gap:1px 6px}
 .facts dt{color:var(--muted)}.facts dd{margin:0;overflow-wrap:anywhere}
 .acts{display:flex;gap:5px}
-.acts button{flex:1;padding:4px 8px}
-.empty{padding:7px;color:var(--muted);text-align:center;font-size:11.5px}
-.tabs{display:flex;gap:2px;padding:2px 5px 0}
-.tab{border:0;background:none;border-radius:0;padding:4px 7px;color:var(--muted);font-weight:600;font-size:11.5px}
-.tab.sel{color:var(--text);box-shadow:0 -2px 0 var(--accent) inset}
-#list{max-height:132px;overflow-y:auto}
-.row{display:flex;gap:6px;align-items:center;padding:3px 7px;border-top:1px solid var(--line)}
-.row .av{width:18px;height:18px;border-radius:5px;font-size:10px}
-.row button{font-size:11px;padding:2px 7px;flex:none}
-.banner{border-radius:7px;padding:4px 7px;margin:5px 0;font-size:11px;white-space:pre-wrap}
-.banner.warn{background:var(--warnbg);color:var(--warn)}
-.banner.err{background:var(--badbg);color:var(--bad)}
-.welcome{padding:12px;text-align:center}
-.welcome p{color:var(--muted);margin:6px 0 10px;font-size:11.5px}
-.foot{display:flex;gap:2px;align-items:center;margin-top:7px;color:var(--muted);font-size:11px}
+.acts button{flex:1;padding:3px 8px}
+.empty{padding:6px;color:var(--muted);text-align:center;font-size:10.5px}
+.tabs{display:flex;gap:2px;padding:1px 4px 0}
+.tab{border:0;border-radius:0;padding:3px 6px;color:var(--muted);font-size:11px}
+.tab.sel{color:var(--text);font-weight:600;box-shadow:0 -2px 0 var(--accent) inset}
+#list,#reqs{overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+#list{max-height:124px}#reqs{max-height:330px}
+.row{display:flex;gap:6px;align-items:center;padding:2px 7px;border-top:1px solid var(--line)}
+.row button{font-size:10.5px;padding:1px 6px;flex:none}
+.banner{border:1px solid var(--line);border-radius:6px;padding:3px 7px;margin:5px 0;font-size:10.5px;color:var(--muted);white-space:pre-wrap}
+.banner.err{border-color:var(--bad);color:var(--bad)}
+.welcome{padding:10px;text-align:center}
+.welcome p{color:var(--muted);margin:5px 0 9px;font-size:10.5px}
+.foot{display:flex;gap:1px;align-items:center;margin-top:6px;color:var(--muted);font-size:10.5px}
 .foot label{display:flex;gap:4px;align-items:center;cursor:pointer;margin-right:auto}
-.foot input{margin:0}
-#toast{position:fixed;left:50%;bottom:8px;transform:translateX(-50%);width:max-content;max-width:94vw;padding:6px 10px;border-radius:7px;
-background:var(--bad);color:#fff;display:none;white-space:pre-wrap;font-size:11.5px}
+.foot input{margin:0;width:11px;height:11px}
+#toast{position:fixed;left:50%;bottom:8px;transform:translateX(-50%);width:max-content;max-width:94vw;padding:5px 9px;border-radius:6px;
+background:var(--bad);color:#fff;display:none;white-space:pre-wrap;font-size:10.5px}
 </style></head><body><main>
 <header>
-  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linejoin="round">
-    <path d="M12 3l7 3v5.5c0 4.3-2.9 8-7 9.5-4.1-1.500-7-5.200-7-9.500V6l7-3z"/><path d="M9 12l2.200 2.200L15.200 10" stroke-linecap="round"/></svg>
-  <div style="flex:1;min-width:0"><h1>Kleine Firewall</h1><div id="sub">…</div></div>
-  <div id="net" title="Datenverkehr gerade: Out = hinaus, In = herein" hidden><div><i class="o"></i><span id="nout"></span></div><div><i class="i"></i><span id="nin"></span></div></div>
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linejoin="round">
+    <path d="M12 3l7 3v5.5c0 4.3-2.9 8-7 9.5-4.1-1.5-7-5.2-7-9.5V6l7-3z"/></svg>
+  <div style="flex:1;min-width:0"><h1>Kleine Firewall<small>v__VERSION__</small></h1><div id="sub">…</div></div>
+  <div id="net" title="Datenverkehr gerade: Out = hinaus, In = herein" hidden></div>
 </header>
 <div id="demo" class="banner warn" hidden>Vorschau – nichts wird verändert, Anfragen sind erfunden.</div>
 <div id="error" class="banner err" hidden></div>
 
 <div id="welcome" class="card welcome" hidden>
-  <b style="font-size:13px">Schutz einschalten?</b>
+  <b style="font-size:12px">Schutz einschalten?</b>
   <p>Ab dann darf kein Programm mehr von selbst ins Internet. Sobald eines es versucht, wirst du hier gefragt
      und entscheidest mit einem Klick. Windows-Dienste für Updates und Uhrzeit sind vorab erlaubt.</p>
   <button class="btn-big" id="start">Schutz einschalten</button>
@@ -535,6 +531,11 @@ background:var(--bad);color:#fff;display:none;white-space:pre-wrap;font-size:11.
 
   <div class="foot">
     <label><input type="checkbox" id="auto"> Mit Windows starten</label>
+    <button class="link" id="smaller" title="Anzeige kleiner">A−</button>
+    <button class="link" id="bigger" title="Anzeige größer">A+</button>
+  </div>
+  <div class="foot" style="margin-top:0">
+    <span style="margin-right:auto"></span>
     <button class="link" id="reset">Alles zurücksetzen</button>
     <button class="link" id="quit">Beenden</button>
   </div>
@@ -558,8 +559,6 @@ async function act(path, body){ try{ show(await api(path, body)); }catch(e){ toa
 
 function el(tag, cls, text){ const e = document.createElement(tag); if(cls) e.className = cls;
   if(text != null) e.textContent = text; return e; }
-function avatar(name){ let h = 0; for(const c of name) h = (h * 31 + c.charCodeAt(0)) % 360;
-  const a = el("div", "av", (name[0] || "?").toUpperCase()); a.style.background = `hsl(${h} 50% 42%)`; return a; }
 function btn(text, cls, fn, title){ const b = el("button", cls, text); b.onclick = fn; if(title) b.title = title; return b; }
 function wants(p){
   const out = p.dirs.includes("out"), inn = p.dirs.includes("in");
@@ -576,6 +575,18 @@ function where(p){
   return p.host ? p.host + " (" + p.addr + ")" : p.addr + (home ? " – Gerät im eigenen Netz" : "");
 }
 
+let scale = 0;
+function setScale(v){ if(v != scale){ scale = v; document.querySelector("main").style.zoom = v; fit(); } }
+function fit(){  // Fenster auf die Groesse des Inhalts bringen (wirkt nur im eigenen App-Fenster)
+  try{
+    const box = document.querySelector("main").getBoundingClientRect();
+    const w = Math.ceil(300 * scale) + (outerWidth - innerWidth);
+    const h = Math.min(screen.availHeight - 40, Math.ceil(box.height) + (outerHeight - innerHeight) + 2);
+    if(Math.abs(outerWidth - w) > 2 || Math.abs(outerHeight - h) > 2) window.resizeTo(w, h);
+  }catch(e){}
+}
+function step(d){ const v = Math.min(1.5, Math.max(0.5, Math.round((scale + d) * 10) / 10)); act("scale", {scale: v}); }
+
 function show(s){
   S = s;
   const json = JSON.stringify(Object.assign({}, s, {net: null})) + tab;
@@ -589,7 +600,8 @@ function show(s){
   }
   first = false;
   document.title = (s.pending.length ? "(" + s.pending.length + ") " : "") + "Kleine Firewall";
-  $("net").hidden = !s.net; if(s.net){ $("nout").textContent = "Out " + s.net.out; $("nin").textContent = "In " + s.net.in; }
+  $("net").hidden = !s.net; if(s.net) $("net").textContent = "Out " + s.net.out + "\nIn " + s.net.in;
+  setScale(s.scale || (devicePixelRatio >= 1.4 ? 0.8 : 1));
   if(json == lastJson) return; lastJson = json;
 
   $("demo").hidden = !s.demo;
@@ -608,7 +620,7 @@ function show(s){
   for(const p of s.pending){
     const c = el("div", "card req"), top = el("div", "top"), info = el("div", "info");
     info.append(el("b", "", p.desc || p.name), el("div", "path", [fileOf(p.path), p.company].filter(Boolean).join(" · ")));
-    top.append(avatar(p.desc || p.name), info);
+    top.append(info);
     const facts = el("dl", "facts");
     const fact = (k, v) => { if(v) facts.append(el("dt", "", k), el("dd", "", v)); };
     fact("Will", wants(p) + (p.count > 1 ? " (" + p.count + " Versuche)" : ""));
@@ -630,14 +642,17 @@ function show(s){
   for(const p of s[tab]){
     const r = el("div", "row"), info = el("div", "info");
     info.append(el("div", "", p.name)); r.title = p.path;
-    r.append(avatar(p.name), info,
+    r.append(info,
       tab == "allowed" ? btn("Sperren", "", () => act("decide", {path: p.path, action: "block"}))
                        : btn("Erlauben", "", () => act("decide", {path: p.path, action: "allow"})),
       btn("✕", "link", () => act("forget", {path: p.path}), "Vergessen – beim nächsten Mal wird wieder gefragt"));
     list.append(r);
   }
+  fit();
 }
 
+$("smaller").onclick = () => step(-0.1);
+$("bigger").onclick = () => step(0.1);
 $("start").onclick = () => act("mode", {mode: "ask"});
 $("modes").onclick = e => { const b = e.target.closest("button"); if(b && b.dataset.m != S.mode) act("mode", {mode: b.dataset.m}); };
 for(const t of document.querySelectorAll(".tab")) t.onclick = () => { tab = t.dataset.t; lastJson = ""; show(S); };
@@ -687,7 +702,7 @@ def make_server(guard, token, port):
         def do_GET(self):
             path, _, query = self.path.partition("?")
             if path == "/" and self._allowed(query.removeprefix("t=")):
-                self._send(200, PAGE.replace("__TOKEN__", token).encode("utf-8"), "text/html")
+                self._send(200, PAGE.replace("__TOKEN__", token).replace("__VERSION__", VERSION).encode("utf-8"), "text/html")
             elif path == "/api/state" and self._allowed(self.headers.get("X-Token")):
                 self._send(200, self._state())
             else:
@@ -705,6 +720,10 @@ def make_server(guard, token, port):
                     guard.forget(str(body.get("path", "")))
                 elif self.path == "/api/mode":
                     guard.set_mode(body.get("mode"))
+                elif self.path == "/api/scale":
+                    with guard.lock:
+                        guard.state["scale"] = min(1.5, max(0.5, round(float(body.get("scale")), 1)))
+                        guard.save()
                 elif self.path == "/api/autostart":
                     guard.sys.set_autostart(bool(body.get("on")))
                 elif self.path in ("/api/reset", "/api/quit"):
@@ -905,7 +924,7 @@ class Tray:
             self.guard.net = {"in": fmt_rate(rate_in), "out": fmt_rate(rate_out)}
             n = nid(1 | 2 | 4)  # Nachricht, Symbol, Text
             n.hIcon = icon(level(rate_in), level(rate_out))
-            n.szTip = f"Kleine Firewall\nIn {fmt_rate(rate_in)} - Out {fmt_rate(rate_out)}"[:127]
+            n.szTip = f"Kleine Firewall {VERSION}\nIn {fmt_rate(rate_in)} - Out {fmt_rate(rate_out)}"[:127]
             note, self.guard.balloon = self.guard.balloon, None
             if note and self.added:
                 n.uFlags |= 0x10  # Sprechblase
@@ -957,7 +976,7 @@ def open_ui(url):
         edge = os.path.join(base or "", "Microsoft", "Edge", "Application", "msedge.exe")
         if base and os.path.exists(edge):
             try:
-                subprocess.Popen([edge, f"--app={url}", "--window-size=350,540"])
+                subprocess.Popen([edge, f"--app={url}", "--window-size=300,420"])
                 return
             except OSError:
                 break
@@ -977,7 +996,7 @@ def say(text):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Kleine Firewall fuer Windows")
+    ap = argparse.ArgumentParser(description=f"Kleine Firewall fuer Windows, Version {VERSION}")
     ap.add_argument("--demo", action="store_true", help="nur ansehen, nichts veraendern")
     ap.add_argument("--hintergrund", action="store_true", help="starten, ohne die Oberflaeche zu oeffnen")
     ap.add_argument("--zuruecksetzen", action="store_true", help="alle Regeln entfernen, Windows-Standard herstellen")
