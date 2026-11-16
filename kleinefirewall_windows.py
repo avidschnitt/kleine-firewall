@@ -442,9 +442,9 @@ PAGE = r"""<!doctype html>
 <title>Kleine Firewall</title>
 <style>
 :root{--bg:#c2c5ca;--card:#d2d4d8;--text:#1b1e23;--muted:#565c65;--line:#a8acb3;--accent:#3c4450;
---ok:#1d6436;--bad:#96281f}
+--ok:#437a57;--bad:#9a4f48}
 @media (prefers-color-scheme:dark){:root{--bg:#1c1e22;--card:#26292e;--text:#e4e6ea;--muted:#9aa0a9;--line:#3a3e45;
---accent:#aeb4be;--ok:#7cc796;--bad:#e89088}}
+--accent:#aeb4be;--ok:#3f7352;--bad:#8f4741}}
 *{box-sizing:border-box}
 html{overflow:hidden}
 body{margin:0;background:var(--bg);color:var(--text);font:11.5px/1.3 system-ui,-apple-system,"Segoe UI",sans-serif}
@@ -460,8 +460,8 @@ h2{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut
 button{font:inherit;cursor:pointer;border-radius:5px;border:1px solid var(--line);background:none;color:var(--text);padding:2px 7px}
 button:hover{border-color:var(--text)}
 button:focus-visible{outline:2px solid var(--text);outline-offset:1px}
-.btn-ok{border-color:var(--ok);color:var(--ok);font-weight:600}
-.btn-bad{border-color:var(--bad);color:var(--bad);font-weight:600}
+.btn-ok{background:var(--ok);border-color:var(--ok);color:#fff;font-weight:600}
+.btn-bad{background:var(--bad);border-color:var(--bad);color:#fff;font-weight:600}
 .btn-big{background:var(--accent);border-color:var(--accent);color:var(--card);font-weight:600;padding:5px 12px}
 .link{border:0;color:var(--muted);padding:2px 4px;font-size:10.5px}
 .link:hover{color:var(--text)}
@@ -486,7 +486,7 @@ button:focus-visible{outline:2px solid var(--text);outline-offset:1px}
 .row{display:flex;gap:6px;align-items:center;padding:2px 7px;border-top:1px solid var(--line)}
 .row button{font-size:10.5px;padding:1px 6px;flex:none}
 .banner{border:1px solid var(--line);border-radius:6px;padding:3px 7px;margin:5px 0;font-size:10.5px;color:var(--muted);white-space:pre-wrap}
-.banner.err{border-color:var(--bad);color:var(--bad)}
+.banner.err{border-color:var(--bad);color:var(--text)}
 .welcome{padding:10px;text-align:center}
 .welcome p{color:var(--muted);margin:5px 0 9px;font-size:10.5px}
 .foot{display:flex;gap:1px;align-items:center;margin-top:6px;color:var(--muted);font-size:10.5px}
