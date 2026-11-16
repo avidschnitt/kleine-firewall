@@ -17,6 +17,7 @@ import ntpath
 import os
 import platform
 import secrets
+import socket
 import string
 import subprocess
 import sys
@@ -184,6 +185,47 @@ class WinSystem:
         self.last_record = max(self.last_record, best[1])
         return list(reversed(best[2]))  # aelteste zuerst
 
+    def file_info(self, path):
+        """Hersteller und Beschreibung, wie sie in der Programmdatei hinterlegt sind."""
+        try:
+            v = ctypes.windll.version
+            size = v.GetFileVersionInfoSizeW(path, None)
+            if not size:
+                return {}
+            buf = ctypes.create_string_buffer(size)
+            if not v.GetFileVersionInfoW(path, 0, size, buf):
+                return {}
+            ptr, length = ctypes.c_void_p(), ctypes.c_uint()
+
+            def query(key):
+                ok = v.VerQueryValueW(buf, key, ctypes.byref(ptr), ctypes.byref(length))
+                return (ptr.value, length.value) if ok and ptr.value and length.value else (None, 0)
+
+            langs = []
+            addr, _ = query("\\VarFileInfo\\Translation")
+            if addr:
+                pair = (ctypes.c_ushort * 2).from_address(addr)
+                langs.append("%04x%04x" % (pair[0], pair[1]))
+            langs += ["040904b0", "040904e4", "040704b0", "000004b0"]
+            out = {}
+            for field, name in (("company", "CompanyName"), ("desc", "FileDescription")):
+                for lang in langs:
+                    addr, n = query(f"\\StringFileInfo\\{lang}\\{name}")
+                    if addr:
+                        text = ctypes.wstring_at(addr, n).split("\0")[0].strip()
+                        if text:
+                            out[field] = text[:80]
+                            break
+            return out
+        except Exception:
+            return {}
+
+    def host_name(self, addr):
+        try:
+            return socket.gethostbyaddr(addr)[0]
+        except (OSError, UnicodeError):
+            return ""
+
     # -- Autostart
     def autostart(self):
         return self.cmd(["schtasks", "/query", "/tn", TASK], check=False)[0] == 0
@@ -235,6 +277,14 @@ class DemoSystem:
     def set_autostart(self, on): self._auto = on
     def reset(self, paths): pass
 
+    def file_info(self, path):
+        return {"firefox.exe": {"company": "Mozilla Corporation", "desc": "Firefox"},
+                "spotify.exe": {"company": "Spotify Ltd", "desc": "Spotify"},
+                "medienserver.exe": {"company": "Beispiel GmbH", "desc": "Medienserver"}}.get(ntpath.basename(path).lower(), {})
+
+    def host_name(self, addr):
+        return {"34.107.221.82": "detectportal.firefox.com", "35.186.224.25": "ap.spotify.com"}.get(addr, "")
+
     def read_events(self):
         out = []
         while self.sent < len(self.SCRIPT) and time.time() - self.start >= self.SCRIPT[self.sent][0]:
@@ -253,6 +303,7 @@ class Guard:
         self.url = url
         self.lock = threading.RLock()
         self.pending = {}        # key -> Anfrage
+        self.hosts = {}          # IP-Adresse -> Name der Gegenstelle
         self.error = ""
         self.tray_error = ""
         self.net = None          # aktueller Datenverkehr fuer die Anzeige
@@ -336,13 +387,25 @@ class Guard:
             item = self.pending.get(key)
             if item is None:
                 item = self.pending[key] = {"path": e["path"], "name": nice_name(e["path"]), "dirs": [],
-                                            "count": 0, "first": time.time()}
+                                            "count": 0, "first": time.time(), **self.sys.file_info(e["path"])}
                 fresh = item["name"]
             if e["dir"] not in item["dirs"]:
                 item["dirs"].append(e["dir"])
                 fresh = item["name"]
-            item.update(count=item["count"] + 1, addr=e["addr"], port=e["port"], proto=e["proto"], dir=e["dir"])
+            item.update(count=item["count"] + 1, addr=e["addr"], port=e["port"], proto=e["proto"], dir=e["dir"],
+                        host=self.hosts.get(e["addr"], ""))
+            if e["addr"] and e["addr"] not in self.hosts:
+                self.hosts[e["addr"]] = ""
+                threading.Thread(target=self._lookup, args=(e["addr"],), daemon=True).start()
         return fresh
+
+    def _lookup(self, addr):
+        name = self.sys.host_name(addr)
+        with self.lock:
+            self.hosts[addr] = name
+            for item in self.pending.values():
+                if item.get("addr") == addr:
+                    item["host"] = name
 
     def watch(self):
         while not self.stop.wait(2):
@@ -382,67 +445,71 @@ PAGE = r"""<!doctype html>
 @media (prefers-color-scheme:dark){:root{--bg:#11141a;--card:#1a1f28;--text:#e9ecf2;--muted:#98a2b3;--line:#2b3240;
 --accent:#6ea0ff;--accentbg:#1c2a4a;--ok:#62d394;--okbg:#153324;--bad:#ff8f85;--badbg:#3a1b19;--warnbg:#3a2f12;--warn:#f2c661;--shadow:none}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font:14px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:420px;margin:0 auto;padding:12px 12px 16px}
-header{display:flex;align-items:center;gap:9px;margin-bottom:10px}
+body{margin:0;background:var(--bg);color:var(--text);font:12.5px/1.3 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:340px;margin:0 auto;padding:8px}
+header{display:flex;align-items:center;gap:7px;margin-bottom:6px}
 header svg{flex:none}
-h1{font-size:15px;margin:0}
-#sub{color:var(--muted);font-size:12px}
-h2{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:14px 2px 5px;font-weight:700}
-#net{font-size:11.5px;color:var(--muted);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
-#net i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
+h1{font-size:13px;margin:0}
+#sub{color:var(--muted);font-size:11px}
+h2{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:9px 2px 3px;font-weight:700}
+#net{font-size:10.5px;color:var(--muted);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+#net i{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:4px}
 #net .o{background:#c44fd6}#net .i{background:#3b82f6}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow)}
-button{font:inherit;cursor:pointer;border-radius:7px;border:1px solid var(--line);background:var(--card);color:var(--text);padding:4px 9px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)}
+button{font:inherit;cursor:pointer;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--text);padding:3px 8px}
 button:hover{border-color:var(--accent)}
 button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .btn-ok{background:var(--ok);border-color:var(--ok);color:#fff;font-weight:600}
 .btn-bad{background:var(--bad);border-color:var(--bad);color:#fff;font-weight:600}
 @media (prefers-color-scheme:dark){.btn-ok,.btn-bad{color:#10141a}}
-.btn-big{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;padding:8px 16px}
-.link{border:0;background:none;color:var(--muted);padding:3px 6px;font-size:12px}
+.btn-big{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;padding:6px 14px}
+.link{border:0;background:none;color:var(--muted);padding:2px 5px;font-size:11px}
 .link:hover{color:var(--text)}
-.modes{margin-top:8px;display:flex;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:3px;gap:3px}
-.mode{flex:1;border:0;background:none;padding:6px 4px;font-weight:600;font-size:13px;color:var(--muted);white-space:nowrap}
+.modes{display:flex;background:var(--card);border:1px solid var(--line);border-radius:7px;padding:2px;gap:2px}
+.mode{flex:1;border:0;background:none;padding:4px 2px;font-weight:600;font-size:11.5px;color:var(--muted);white-space:nowrap}
 .mode.sel{background:var(--accent);color:#fff}
 @media (prefers-color-scheme:dark){.mode.sel{color:#10141a}}
-.req{display:flex;gap:9px;align-items:center;padding:8px 9px;margin-bottom:5px}
-.av{flex:none;width:30px;height:30px;border-radius:8px;color:#fff;font-weight:700;font-size:14px;display:grid;place-items:center}
+.req{padding:6px 7px;margin-bottom:4px}
+.top{display:flex;gap:7px;align-items:center}
+.av{flex:none;width:24px;height:24px;border-radius:6px;color:#fff;font-weight:700;font-size:12px;display:grid;place-items:center}
 .info{flex:1;min-width:0}
 .info>*{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.info b{font-size:14px}
-.info .path{font-size:11.5px;color:var(--muted)}
-.acts{display:flex;gap:5px;flex:none}
-.acts button{padding:5px 10px;font-size:13px}
-.empty{padding:10px;color:var(--muted);text-align:center;font-size:13px}
-.tabs{display:flex;gap:2px;padding:4px 6px 0}
-.tab{border:0;background:none;border-radius:0;padding:5px 9px;color:var(--muted);font-weight:600;font-size:13px}
+.info b{font-size:12.5px;display:block}
+.info .path{font-size:10.5px;color:var(--muted)}
+.facts{margin:5px 0 6px;font-size:11px;display:grid;grid-template-columns:auto 1fr;gap:1px 7px}
+.facts dt{color:var(--muted)}.facts dd{margin:0;overflow-wrap:anywhere}
+.acts{display:flex;gap:5px}
+.acts button{flex:1;padding:4px 8px}
+.empty{padding:7px;color:var(--muted);text-align:center;font-size:11.5px}
+.tabs{display:flex;gap:2px;padding:2px 5px 0}
+.tab{border:0;background:none;border-radius:0;padding:4px 7px;color:var(--muted);font-weight:600;font-size:11.5px}
 .tab.sel{color:var(--text);box-shadow:0 -2px 0 var(--accent) inset}
-#list{max-height:176px;overflow-y:auto}
-.row{display:flex;gap:8px;align-items:center;padding:5px 9px;border-top:1px solid var(--line)}
-.row .av{width:22px;height:22px;border-radius:6px;font-size:11px}
-.row button{font-size:12px;padding:3px 8px;flex:none}
-.banner{border-radius:8px;padding:6px 9px;margin-top:8px;font-size:12px;white-space:pre-wrap}
+#list{max-height:132px;overflow-y:auto}
+.row{display:flex;gap:6px;align-items:center;padding:3px 7px;border-top:1px solid var(--line)}
+.row .av{width:18px;height:18px;border-radius:5px;font-size:10px}
+.row button{font-size:11px;padding:2px 7px;flex:none}
+.banner{border-radius:7px;padding:4px 7px;margin:5px 0;font-size:11px;white-space:pre-wrap}
 .banner.warn{background:var(--warnbg);color:var(--warn)}
 .banner.err{background:var(--badbg);color:var(--bad)}
-.welcome{padding:16px;text-align:center}
-.welcome p{color:var(--muted);margin:8px 0 12px;font-size:13px}
-.foot{display:flex;gap:2px;align-items:center;margin-top:10px;color:var(--muted);font-size:12px}
-.foot label{display:flex;gap:5px;align-items:center;cursor:pointer;margin-right:auto}
-#toast{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);width:max-content;max-width:92vw;padding:8px 12px;border-radius:8px;
-background:var(--bad);color:#fff;display:none;white-space:pre-wrap;font-size:13px}
+.welcome{padding:12px;text-align:center}
+.welcome p{color:var(--muted);margin:6px 0 10px;font-size:11.5px}
+.foot{display:flex;gap:2px;align-items:center;margin-top:7px;color:var(--muted);font-size:11px}
+.foot label{display:flex;gap:4px;align-items:center;cursor:pointer;margin-right:auto}
+.foot input{margin:0}
+#toast{position:fixed;left:50%;bottom:8px;transform:translateX(-50%);width:max-content;max-width:94vw;padding:6px 10px;border-radius:7px;
+background:var(--bad);color:#fff;display:none;white-space:pre-wrap;font-size:11.5px}
 </style></head><body><main>
 <header>
-  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linejoin="round">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linejoin="round">
     <path d="M12 3l7 3v5.5c0 4.3-2.9 8-7 9.5-4.1-1.500-7-5.200-7-9.500V6l7-3z"/><path d="M9 12l2.200 2.200L15.200 10" stroke-linecap="round"/></svg>
   <div style="flex:1;min-width:0"><h1>Kleine Firewall</h1><div id="sub">…</div></div>
   <div id="net" title="Datenverkehr gerade: Out = hinaus, In = herein" hidden><div><i class="o"></i><span id="nout"></span></div><div><i class="i"></i><span id="nin"></span></div></div>
 </header>
-<div id="demo" class="banner warn" hidden>Vorschau: Es wird nichts an diesem Rechner verändert, die Anfragen sind erfunden.</div>
+<div id="demo" class="banner warn" hidden>Vorschau – nichts wird verändert, Anfragen sind erfunden.</div>
 <div id="error" class="banner err" hidden></div>
 
 <div id="welcome" class="card welcome" hidden>
-  <b style="font-size:15px">Schutz einschalten?</b>
+  <b style="font-size:13px">Schutz einschalten?</b>
   <p>Ab dann darf kein Programm mehr von selbst ins Internet. Sobald eines es versucht, wirst du hier gefragt
      und entscheidest mit einem Klick. Windows-Dienste für Updates und Uhrzeit sind vorab erlaubt.</p>
   <button class="btn-big" id="start">Schutz einschalten</button>
@@ -496,14 +563,17 @@ function avatar(name){ let h = 0; for(const c of name) h = (h * 31 + c.charCodeA
 function btn(text, cls, fn, title){ const b = el("button", cls, text); b.onclick = fn; if(title) b.title = title; return b; }
 function wants(p){
   const out = p.dirs.includes("out"), inn = p.dirs.includes("in");
-  return out && inn ? "will raus und Verbindungen annehmen"
-       : inn ? "will Verbindungen von außen annehmen" : "will ins Internet";
+  return out && inn ? "ins Internet und Verbindungen annehmen"
+       : inn ? "Verbindungen von außen annehmen" : "ins Internet";
 }
-function detail(p){
-  const bits = [];
-  if(p.addr) bits.push((p.dir == "in" ? "von " : "nach ") + p.addr);
-  if(p.count > 1) bits.push(p.count + "×");
-  return bits.join(" · ");
+const PORTS = {"80": "Webseite", "443": "Webseite (verschlüsselt)", "53": "Namensauflösung", "123": "Uhrzeit",
+  "25": "E-Mail-Versand", "465": "E-Mail-Versand", "587": "E-Mail-Versand", "993": "E-Mail-Abruf", "995": "E-Mail-Abruf",
+  "143": "E-Mail-Abruf", "22": "Fernzugriff (SSH)", "3389": "Fernsteuerung", "445": "Dateifreigabe", "21": "Dateiübertragung"};
+function fileOf(path){ return path.split(/[\\/]/).pop(); }
+function where(p){
+  if(!p.addr) return "";
+  const home = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|f[cde])/i.test(p.addr);
+  return p.host ? p.host + " (" + p.addr + ")" : p.addr + (home ? " – Gerät im eigenen Netz" : "");
 }
 
 function show(s){
@@ -513,7 +583,7 @@ function show(s){
     const id = p.path + p.dirs.join();
     if(!known.has(id)){ known.add(id);
       if(!first && s.mode == "ask" && document.hidden && window.Notification && Notification.permission == "granted"){
-        const n = new Notification(p.name + " " + wants(p), {body: "Klicken, um zu entscheiden.", tag: p.path});
+        const n = new Notification(p.name + " will " + wants(p), {body: "Klicken, um zu entscheiden.", tag: p.path});
         n.onclick = () => { window.focus(); n.close(); };
       }}
   }
@@ -536,13 +606,19 @@ function show(s){
   if(!s.pending.length) reqs.append(el("div", "card empty",
     s.mode == "allow" ? "In diesem Modus wird nicht gefragt." : "Alles ruhig."));
   for(const p of s.pending){
-    const c = el("div", "card req"), info = el("div", "info");
-    info.append(el("b", "", p.name), el("div", "path", [wants(p), detail(p)].filter(Boolean).join(" · ")));
-    c.title = p.path;
+    const c = el("div", "card req"), top = el("div", "top"), info = el("div", "info");
+    info.append(el("b", "", p.desc || p.name), el("div", "path", [fileOf(p.path), p.company].filter(Boolean).join(" · ")));
+    top.append(avatar(p.desc || p.name), info);
+    const facts = el("dl", "facts");
+    const fact = (k, v) => { if(v) facts.append(el("dt", "", k), el("dd", "", v)); };
+    fact("Will", wants(p) + (p.count > 1 ? " (" + p.count + " Versuche)" : ""));
+    fact(p.dir == "in" ? "Von" : "Nach", where(p));
+    fact("Port", p.port ? p.port + (p.proto ? " " + p.proto : "") + (PORTS[p.port] ? " – " + PORTS[p.port] : "") : "");
+    fact("Datei", p.path);
     const acts = el("div", "acts");
     acts.append(btn("Erlauben", "btn-ok", () => act("decide", {path: p.path, action: "allow"})),
                 btn("Sperren", "btn-bad", () => act("decide", {path: p.path, action: "block"})));
-    c.append(avatar(p.name), info, acts); reqs.append(c);
+    c.append(top, facts, acts); reqs.append(c);
   }
 
   for(const t of document.querySelectorAll(".tab")){
@@ -881,7 +957,7 @@ def open_ui(url):
         edge = os.path.join(base or "", "Microsoft", "Edge", "Application", "msedge.exe")
         if base and os.path.exists(edge):
             try:
-                subprocess.Popen([edge, f"--app={url}", "--window-size=440,620"])
+                subprocess.Popen([edge, f"--app={url}", "--window-size=350,540"])
                 return
             except OSError:
                 break
