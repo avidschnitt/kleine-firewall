@@ -8,13 +8,16 @@ Windows-Firewall, kein eigener Treiber.
 ## Herunterladen
 
 Rechts auf **Releases** klicken und bei der neuesten Version die Datei
-`KleineFirewall-<Nummer>.exe` herunterladen. Die Versionsnummer steht im Fenster neben dem Namen.
+`KleineFirewall-<Nummer>.zip` herunterladen. ZIP entpacken, den Ordner an einen
+festen Platz legen und darin `KleineFirewall-<Nummer>.exe` starten. Der Ordner
+`_internal` daneben gehoert dazu und muss bleiben.
 
 Die EXE ist nicht signiert: Windows zeigt beim ersten Start eine Warnung
 ("Weitere Informationen" -> "Trotzdem ausfuehren").
 
 ## Versionen
 
+- **2.1** - als Ordner im ZIP statt als einzelne EXE (weniger Fehlalarme bei Virenscannern); jeder Build wird mit Windows Defender geprueft.
 - **2.0** - eigenes Programmfenster statt Browser; Schliessen-Kreuz blendet es nur aus, das Programm laeuft in der Taskleiste weiter.
 - **1.7** - eigenes kleines Fenster auch auf Rechnern, auf denen Edge anders installiert ist oder fehlt (dann ueber Chrome).
 - **1.6** - Versionsnummer im Dateinamen (`KleineFirewall-1.6.exe`); Autostart folgt der neuen Datei.

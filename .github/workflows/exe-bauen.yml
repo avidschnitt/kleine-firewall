@@ -18,20 +18,33 @@ jobs:
         id: v
         shell: bash
         run: echo "nr=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' kleinefirewall_windows.py)" >> "$GITHUB_OUTPUT"
-      - run: pyinstaller --onefile --noconsole --uac-admin --name KleineFirewall-${{ steps.v.outputs.nr }} kleinefirewall_windows.py
+      # Als Ordner statt als eine sich selbst entpackende Datei: loest seltener Fehlalarme bei Virenscannern aus
+      - run: pyinstaller --onedir --noconsole --uac-admin --name KleineFirewall-${{ steps.v.outputs.nr }} kleinefirewall_windows.py
       - name: Selbsttest
         shell: pwsh
         run: |
-          $exe = "dist\KleineFirewall-${{ steps.v.outputs.nr }}.exe"
+          $exe = "dist\KleineFirewall-${{ steps.v.outputs.nr }}\KleineFirewall-${{ steps.v.outputs.nr }}.exe"
           $p = Start-Process $exe -ArgumentList "--selbsttest", "$PWD\selbsttest.txt" -PassThru
           if (-not $p.WaitForExit(180000)) { $p.Kill(); Write-Host "Zeitueberschreitung" }
           Write-Host "Exit-Code: $($p.ExitCode)"
           if (Test-Path selbsttest.txt) { Get-Content selbsttest.txt } else { Write-Host "FEHLER keine Ausgabe"; exit 1 }
           if (Select-String -Path selbsttest.txt -Pattern "^FEHLER" -Quiet) { exit 1 }
+      - name: Virenpruefung mit Windows Defender
+        shell: pwsh
+        run: |
+          $mp = "C:\Program Files\Windows Defender\MpCmdRun.exe"
+          & $mp -SignatureUpdate | Select-Object -Last 2
+          $dir = "$PWD\dist\KleineFirewall-${{ steps.v.outputs.nr }}"
+          & $mp -Scan -ScanType 3 -File $dir -DisableRemediation
+          Write-Host "Defender-Ergebnis: $LASTEXITCODE (0 = nichts gefunden, 2 = Fund)"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: ZIP packen
+        shell: pwsh
+        run: Compress-Archive -Path "dist\KleineFirewall-${{ steps.v.outputs.nr }}" -DestinationPath "KleineFirewall-${{ steps.v.outputs.nr }}.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: KleineFirewall-${{ steps.v.outputs.nr }}
-          path: dist/KleineFirewall-${{ steps.v.outputs.nr }}.exe
+          path: KleineFirewall-${{ steps.v.outputs.nr }}.zip
       - name: Als Version veroeffentlichen
         if: github.ref == 'refs/heads/main'
         shell: bash
@@ -39,6 +52,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="v${{ steps.v.outputs.nr }}"
-          exe="dist/KleineFirewall-${{ steps.v.outputs.nr }}.exe"
-          gh release create "$tag" "$exe" --title "Kleine Firewall $tag" --notes "Automatisch gebaut." \
-            || gh release upload "$tag" "$exe" --clobber
+          zip="KleineFirewall-${{ steps.v.outputs.nr }}.zip"
+          gh release create "$tag" "$zip" --title "Kleine Firewall $tag" --notes "Automatisch gebaut. ZIP entpacken, Ordner behalten, darin die EXE starten." \
+            || gh release upload "$tag" "$zip" --clobber
