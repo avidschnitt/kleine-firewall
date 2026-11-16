@@ -30,7 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "KleineFirewall"
-VERSION = "1.6"
+VERSION = "1.7"
 PORT = 47615
 TASK = "KleineFirewall"
 # Windows-Protokollkategorie "Filterplattformverbindung" (sprachunabhaengige Kennung)
@@ -1020,6 +1020,32 @@ class Tray:
 
 # ---------------------------------------------------------------- Start
 
+def app_browsers():
+    """Browser, die ein eigenes kleines App-Fenster oeffnen koennen: Edge, sonst Chrome."""
+    found = []
+    for exe, folder in (("msedge.exe", ("Microsoft", "Edge", "Application")),
+                        ("chrome.exe", ("Google", "Chrome", "Application"))):
+        paths = []
+        try:  # wo Windows das Programm eingetragen hat
+            import winreg
+            for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                try:
+                    key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths" + "\\" + exe
+                    paths.append(winreg.QueryValue(root, key))
+                except OSError:
+                    pass
+        except ImportError:
+            pass
+        for var in ("ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"):  # uebliche Orte
+            if os.environ.get(var):
+                paths.append(os.path.join(os.environ[var], *folder, exe))
+        for path in paths:
+            path = (path or "").strip('"')
+            if path and os.path.exists(path) and path not in found:
+                found.append(path)
+    return found
+
+
 def app_windows():
     """Bereits offene Fenster dieser Oberflaeche (nur das eigene App-Fenster, kein Browser-Tab)."""
     if platform.system() != "Windows":
@@ -1054,14 +1080,12 @@ def open_ui(url):
             u.ShowWindow(w.HWND(hwnd), 9)
         u.SetForegroundWindow(w.HWND(hwnd))
         return
-    for base in (os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles")):
-        edge = os.path.join(base or "", "Microsoft", "Edge", "Application", "msedge.exe")
-        if base and os.path.exists(edge):
-            try:
-                subprocess.Popen([edge, f"--app={url}", "--window-size=300,420"])
-                return
-            except OSError:
-                break
+    for browser in app_browsers():
+        try:
+            subprocess.Popen([browser, f"--app={url}", "--window-size=300,420"])
+            return
+        except OSError:
+            continue
     webbrowser.open(url)
 
 

@@ -15,6 +15,7 @@ Die EXE ist nicht signiert: Windows zeigt beim ersten Start eine Warnung
 
 ## Versionen
 
+- **1.7** - eigenes kleines Fenster auch auf Rechnern, auf denen Edge anders installiert ist oder fehlt (dann ueber Chrome).
 - **1.6** - Versionsnummer im Dateinamen (`KleineFirewall-1.6.exe`); Autostart folgt der neuen Datei.
 - **1.5** - Rechtsklick auf das Taskleisten-Symbol zeigt ein Menue mit "Oeffnen" und "Beenden".
 - **1.4** - es gibt nur noch ein Fenster; ein offenes wird nach vorn geholt statt neu geoeffnet.
