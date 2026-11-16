@@ -30,7 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "KleineFirewall"
-VERSION = "1.7"
+VERSION = "2.0"
 PORT = 47615
 TASK = "KleineFirewall"
 # Windows-Protokollkategorie "Filterplattformverbindung" (sprachunabhaengige Kennung)
@@ -38,6 +38,7 @@ AUDIT_GUID = "{0CCE9226-69AE-11D9-BED3-505054503030}"
 NS = "{http://schemas.microsoft.com/win/2004/08/events/event}"
 NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 MODES = ("ask", "quiet", "allow")
+NATIVE = {"window": None, "quitting": False}  # eigenes Programmfenster, falls verfuegbar
 
 
 class SysError(Exception):
@@ -393,7 +394,7 @@ class Guard:
             progs = sorted(self.state["programs"].values(), key=lambda p: nice_name(p["path"]).lower())
             view = lambda p: {"path": p["path"], "name": nice_name(p["path"]), "dirs": p.get("dirs", [])}
             return {
-                "mode": self.state["mode"], "demo": self.sys.demo, "scale": self.state.get("scale"), "error": self.error or self.tray_error, "net": self.net,
+                "mode": self.state["mode"], "demo": self.sys.demo, "native": NATIVE["window"] is not None, "scale": self.state.get("scale"), "error": self.error or self.tray_error, "net": self.net,
                 "pending": sorted(self.pending.values(), key=lambda p: p["first"]),
                 "allowed": [view(p) for p in progs if p["action"] == "allow"],
                 "blocked": [view(p) for p in progs if p["action"] == "block"],
@@ -634,7 +635,7 @@ function show(s){
   $("sub").textContent = {null: "Schutz ist noch aus", ask: "Schutz aktiv – du wirst gefragt",
     quiet: "Schutz aktiv – Neues bleibt still gesperrt", allow: "Alles darf raus, außer deiner Sperrliste"}[s.mode];
   for(const b of $("modes").children) b.classList.toggle("sel", b.dataset.m == s.mode);
-  $("notify").hidden = !(s.mode == "ask" && window.Notification && Notification.permission == "default");
+  $("notify").hidden = !(s.mode == "ask" && !s.native && window.Notification && Notification.permission == "default");
   $("auto").checked = !!s.autostart;
 
   $("reqtitle").textContent = s.pending.length ? "Anfragen (" + s.pending.length + ")" : "Anfragen";
@@ -758,7 +759,7 @@ def make_server(guard, token, port):
                     if self.path == "/api/reset":
                         guard.reset()
                     self._send(200, {})
-                    threading.Thread(target=self.server.shutdown, daemon=True).start()
+                    guard.on_quit()
                     return
                 else:
                     return self._send(404, {"error": "Unbekannt."})
@@ -1058,8 +1059,9 @@ def app_windows():
         title, cls = ctypes.create_unicode_buffer(200), ctypes.create_unicode_buffer(80)
         u.GetWindowTextW(w.HWND(hwnd), title, 200)
         u.GetClassNameW(w.HWND(hwnd), cls, 80)
-        if title.value.endswith("Kleine Firewall") and cls.value.startswith("Chrome_WidgetWin") \
-                and u.IsWindowVisible(w.HWND(hwnd)):
+        own = cls.value.startswith("WindowsForms") and title.value == "Kleine Firewall"
+        browser = cls.value.startswith("Chrome_WidgetWin") and title.value.endswith("Kleine Firewall")
+        if (own or browser) and u.IsWindowVisible(w.HWND(hwnd)):
             found.append(hwnd)
         return True
 
@@ -1073,6 +1075,15 @@ def app_windows():
 def open_ui(url):
     """Als kleines App-Fenster oeffnen (Edge ist bei Windows dabei), sonst im Standardbrowser.
     Ist das Fenster schon offen, wird es nur nach vorn geholt - es gibt immer nur eins."""
+    if NATIVE["window"] is not None:  # eigenes Programmfenster: einblenden
+        try:
+            NATIVE["window"].show()
+            NATIVE["window"].restore()
+        except Exception:
+            pass
+        for hwnd in app_windows()[:1]:
+            ctypes.windll.user32.SetForegroundWindow(ctypes.c_void_p(hwnd))
+        return
     for hwnd in app_windows()[:1]:
         from ctypes import wintypes as w
         u = ctypes.windll.user32
@@ -1087,6 +1098,90 @@ def open_ui(url):
         except OSError:
             continue
     webbrowser.open(url)
+
+
+def webview2_version():
+    """Version der Anzeige-Komponente von Windows (WebView2), leer wenn sie fehlt."""
+    try:
+        import winreg
+    except ImportError:
+        return ""
+    guid = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+    for root, key in ((winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients"),
+                      (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\EdgeUpdate\Clients"),
+                      (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\EdgeUpdate\Clients")):
+        try:
+            with winreg.OpenKey(root, key + "\\" + guid) as k:
+                version = winreg.QueryValueEx(k, "pv")[0]
+                if version and version != "0.0.0.0":
+                    return version
+        except OSError:
+            pass
+    return ""
+
+
+def selftest(path, guard, tray):
+    """Prueft die Windows-Teile, ohne etwas am Rechner zu veraendern, und schreibt das Ergebnis in eine Datei."""
+    lines = [f"Kleine Firewall {VERSION} Selbsttest"]
+
+    def check(name, fn, level="FEHLER"):
+        try:
+            lines.append(f"OK     {name}: {fn()}")
+        except Exception as e:
+            lines.append(f"{level} {name}: {type(e).__name__}: {e}")
+
+    def window():
+        win = NATIVE["window"]
+        if win is None:
+            raise RuntimeError("kein eigenes Fenster")
+        info = win.evaluate_js("document.title + ' | innen ' + innerWidth + 'x' + innerHeight + ' | dpr ' + "
+                               "devicePixelRatio + ' | ziel ' + fitGoal + ' | anfragen ' + "
+                               "document.querySelectorAll('.req').length + ' | ' + document.querySelector('h1').innerText")
+        want = [int(v) for v in str(info).split("ziel ")[1].split(" |")[0].split("x")]
+        have = [int(v) for v in str(info).split("innen ")[1].split(" |")[0].split("x")]
+        if abs(want[0] - have[0]) > 3 or abs(want[1] - have[1]) > 3:
+            raise RuntimeError(f"Groesse passt nicht: {info}")
+        return f"{info} | fenster gefunden: {len(app_windows())}"
+
+    def network():
+        net = WinNet()
+        net.sample()
+        time.sleep(1)
+        return f"{net.sample()} Karten: {len(net.prev)}"
+
+    def events():
+        ws = WinSystem(Path("."))
+        ws.read_events()
+        return f"letzter Datensatz {ws.last_record}, neue: {len(ws.read_events())}"
+
+    def devices():
+        ws = WinSystem(Path("."))
+        ws._load_devices()
+        first = next(iter(ws.devices))
+        return f"{len(ws.devices)} Laufwerke, {first}\\x.exe -> {ws._to_path(first + chr(92) + 'x.exe')}"
+
+    def tray_state():
+        if not tray.added:
+            raise RuntimeError(guard.tray_error or "Symbol nicht angelegt")
+        return f"Symbol angelegt, {len(tray.icons)} Bilder, Verkehr {guard.net}"
+
+    time.sleep(12)
+    notepad = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "notepad.exe")
+    check("Anzeige-Komponente", webview2_version)
+    check("Fenster", window)
+    check("Datenverkehr", network)
+    check("Datei-Angaben", lambda: WinSystem(Path(".")).file_info(notepad) or (_ for _ in ()).throw(RuntimeError("leer")))
+    check("Laufwerke", devices)
+    check("Ereignisprotokoll", events)
+    check("Gegenstelle", lambda: WinSystem(Path(".")).host_name("1.1.1.1"), "INFO  ")
+    check("Autostart-Abfrage", lambda: WinSystem(Path(".")).autostart())
+    check("Browser-Ersatz", app_browsers, "INFO  ")
+    check("Taskleiste", tray_state, "INFO  ")
+    check("Fehlermeldung", lambda: guard.error or guard.tray_error or "keine")
+    try:
+        Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    finally:
+        guard.on_quit()
 
 
 def is_admin():
@@ -1107,7 +1202,12 @@ def main():
     ap.add_argument("--hintergrund", action="store_true", help="starten, ohne die Oberflaeche zu oeffnen")
     ap.add_argument("--zuruecksetzen", action="store_true", help="alle Regeln entfernen, Windows-Standard herstellen")
     ap.add_argument("--port", type=int, default=PORT, help=argparse.SUPPRESS)
+    ap.add_argument("--browser", action="store_true", help="Oberflaeche im Browser statt im eigenen Fenster")
+    ap.add_argument("--selbsttest", metavar="DATEI", help=argparse.SUPPRESS)
     args = ap.parse_args()
+    if args.selbsttest:
+        args.demo = True
+        threading.Timer(120, lambda: os._exit(3)).start()  # haengt nie fest
 
     if args.demo:
         state_dir = Path(tempfile.mkdtemp(prefix="kleinefirewall-demo-"))
@@ -1151,10 +1251,18 @@ def main():
 
     guard.url = url
 
-    def quit_all():  # aus dem Menue in der Taskleiste
+    done = threading.Event()
+
+    def quit_all():  # Knopf "Beenden", Zuruecksetzen oder Menue in der Taskleiste
+        NATIVE["quitting"] = True
         for hwnd in app_windows():
             ctypes.windll.user32.PostMessageW(ctypes.c_void_p(hwnd), 0x0010, 0, 0)
-        threading.Thread(target=server.shutdown, daemon=True).start()
+        done.set()
+        if NATIVE["window"] is not None:
+            try:
+                NATIVE["window"].destroy()
+            except Exception:
+                pass
     guard.on_quit = quit_all
     if guard.state["mode"] in ("ask", "quiet") and not system.demo:
         try:
@@ -1168,24 +1276,54 @@ def main():
         except SysError:
             pass
     threading.Thread(target=guard.watch, daemon=True).start()
-    tray = None if system.demo else Tray(guard)
+    on_windows = platform.system() == "Windows"
+    tray = Tray(guard) if on_windows and (not system.demo or args.selbsttest) else None
     if tray:
         tray.start()
     say("Kleine Firewall laeuft. Oberflaeche:\n  " + url)
     for hwnd in app_windows():  # Fenster eines frueheren Laufs schliessen - sie sind nicht mehr verbunden
         ctypes.windll.user32.PostMessageW(ctypes.c_void_p(hwnd), 0x0010, 0, 0)
         time.sleep(0.3)
-    if not args.hintergrund:
-        open_ui(url)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        guard.stop.set()
-        if tray:
-            tray.close()
-        server.server_close()
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    if args.selbsttest:
+        guard.set_mode("ask")
+        threading.Thread(target=selftest, args=(args.selbsttest, guard, tray), daemon=True).start()
+
+    started = False
+    if on_windows and not args.browser and webview2_version():
+        try:  # eigenes Programmfenster
+            import webview
+            win = webview.create_window("Kleine Firewall", url, width=330, height=480,
+                                        hidden=args.hintergrund, min_size=(150, 100))
+
+            def closing():  # Schliessen-Kreuz blendet nur aus; das Programm laeuft in der Taskleiste weiter
+                if NATIVE["quitting"]:
+                    return True
+                win.hide()
+                return False
+            win.events.closing += closing
+            NATIVE["window"] = win
+            started = True
+            webview.start()  # kehrt zurueck, wenn das Fenster endgueltig geschlossen wird
+        except Exception as e:
+            NATIVE["window"] = None
+            if started:
+                done.set()
+            else:
+                guard.tray_error = f"Eigenes Fenster nicht verfuegbar ({e}) - Anzeige im Browser."
+    if not started:
+        if not args.hintergrund:
+            open_ui(url)
+        try:
+            while not done.wait(1):
+                pass
+        except KeyboardInterrupt:
+            pass
+    guard.stop.set()
+    if tray:
+        tray.close()
+    server.shutdown()
+    server.server_close()
     return 0
 
 

@@ -13,12 +13,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pyinstaller
+      - run: pip install pyinstaller pywebview
       - name: Version lesen
         id: v
         shell: bash
         run: echo "nr=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' kleinefirewall_windows.py)" >> "$GITHUB_OUTPUT"
       - run: pyinstaller --onefile --noconsole --uac-admin --name KleineFirewall-${{ steps.v.outputs.nr }} kleinefirewall_windows.py
+      - name: Selbsttest
+        shell: pwsh
+        run: |
+          $exe = "dist\KleineFirewall-${{ steps.v.outputs.nr }}.exe"
+          $p = Start-Process $exe -ArgumentList "--selbsttest", "$PWD\selbsttest.txt" -PassThru
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); Write-Host "Zeitueberschreitung" }
+          Write-Host "Exit-Code: $($p.ExitCode)"
+          if (Test-Path selbsttest.txt) { Get-Content selbsttest.txt } else { Write-Host "FEHLER keine Ausgabe"; exit 1 }
+          if (Select-String -Path selbsttest.txt -Pattern "^FEHLER" -Quiet) { exit 1 }
       - uses: actions/upload-artifact@v4
         with:
           name: KleineFirewall-${{ steps.v.outputs.nr }}
