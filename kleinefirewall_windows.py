@@ -24,13 +24,15 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
+import urllib.request
 import webbrowser
 import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "KleineFirewall"
-VERSION = "2.1"
+VERSION = "2.2"
 PORT = 47615
 TASK = "KleineFirewall"
 # Windows-Protokollkategorie "Filterplattformverbindung" (sprachunabhaengige Kennung)
@@ -39,6 +41,31 @@ NS = "{http://schemas.microsoft.com/win/2004/08/events/event}"
 NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 MODES = ("ask", "quiet", "allow")
 NATIVE = {"window": None, "quitting": False}  # eigenes Programmfenster, falls verfuegbar
+
+
+LOG = {"file": None}
+
+
+def log(text):
+    """Kurzes Protokoll zum Nachsehen, wenn etwas nicht klappt (ProgramData\\KleineFirewall\\log.txt)."""
+    try:
+        if LOG["file"]:
+            if LOG["file"].exists() and LOG["file"].stat().st_size > 200000:
+                LOG["file"].unlink()
+            with open(LOG["file"], "a", encoding="utf-8") as f:
+                f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + str(text) + "\n")
+    except OSError:
+        pass
+
+
+def message(text):
+    """Sichtbare Meldung - damit nie einfach 'nichts passiert'."""
+    log("Meldung: " + text)
+    try:
+        ctypes.windll.user32.MessageBoxW(None, text, "Kleine Firewall", 0x30)
+    except Exception:
+        if sys.stdout:
+            print(text, flush=True)
 
 
 class SysError(Exception):
@@ -749,7 +776,11 @@ def make_server(guard, token, port):
             except (ValueError, TypeError, AttributeError):
                 self._send(400, {"error": "Ungueltige Eingabe."})
 
-    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    class Server(ThreadingHTTPServer):
+        allow_reuse_address = platform.system() != "Windows"  # sonst liessen sich zwei Programme gleichzeitig starten
+        daemon_threads = True
+
+    return Server(("127.0.0.1", port), Handler)
 
 
 # ---------------------------------------------------------------- Taskleisten-Anzeige
@@ -1203,7 +1234,7 @@ def say(text):
         print(text, flush=True)
 
 
-def main():
+def run():
     ap = argparse.ArgumentParser(description=f"Kleine Firewall fuer Windows, Version {VERSION}")
     ap.add_argument("--demo", action="store_true", help="nur ansehen, nichts veraendern")
     ap.add_argument("--hintergrund", action="store_true", help="starten, ohne die Oberflaeche zu oeffnen")
@@ -1238,6 +1269,10 @@ def main():
         system.protect_folder()
 
     ui_file = state_dir / "ui.json"
+    LOG["file"] = state_dir / "log.txt"
+    log(f"Start Version {VERSION} {sys.argv[1:]} aus {sys.executable}")
+    threading.excepthook = lambda a: log("Fehler in Nebenaufgabe: " + "".join(
+        traceback.format_exception(a.exc_type, a.exc_value, a.exc_traceback))[-1500:])
     if args.zuruecksetzen:
         Guard(system, state_dir, "").reset()
         say("Zurueckgesetzt: Regeln entfernt, ausgehende Verbindungen wieder erlaubt.")
@@ -1245,14 +1280,27 @@ def main():
 
     token = secrets.token_urlsafe(24)
     guard = Guard(system, state_dir, "")
-    try:
-        server = make_server(guard, token, args.port)
-    except OSError:  # laeuft schon -> einfach dessen Oberflaeche zeigen
+    server = None
+    for attempt in range(30):
         try:
-            open_ui(json.loads(ui_file.read_text(encoding="utf-8"))["url"])
-        except (OSError, ValueError, KeyError):
-            say(f"Port {args.port} ist belegt.")
-        return 0
+            server = make_server(guard, token, args.port)
+            break
+        except OSError:
+            if attempt == 0:  # laeuft schon (evtl. aeltere Version) -> diese beenden und uebernehmen
+                log("Programm laeuft bereits - bitte es, sich zu beenden")
+                try:
+                    old = json.loads(ui_file.read_text(encoding="utf-8"))["url"].split("?t=")[1]
+                    req = urllib.request.Request(f"http://127.0.0.1:{args.port}/api/quit", data=b"{}", method="POST",
+                                                 headers={"X-Token": old, "Content-Type": "application/json"})
+                    urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=5).read()
+                except Exception as e:
+                    log(f"Beenden der laufenden Version nicht moeglich: {e}")
+            time.sleep(0.5)
+    if server is None:
+        message("Kleine Firewall läuft bereits und ließ sich nicht ablösen.\n\n"
+                "Bitte im Task-Manager alle Einträge 'KleineFirewall' beenden und neu starten.")
+        return 1
+    log("Bereit, Anschluss belegt")
     url = f"http://127.0.0.1:{server.server_port}/?t={token}"
     ui_file.write_text(json.dumps({"url": url}), encoding="utf-8")
 
@@ -1320,14 +1368,17 @@ def main():
             win.events.closing += closing
             NATIVE["window"] = win
             started = True
+            log("Eigenes Fenster wird geoeffnet")
             webview.start()  # kehrt zurueck, wenn das Fenster endgueltig geschlossen wird
         except Exception as e:
+            log("Eigenes Fenster: " + traceback.format_exc()[-1500:])
             NATIVE["window"] = None
             if started:
                 done.set()
             else:
                 guard.tray_error = f"Eigenes Fenster nicht verfuegbar ({e}) - Anzeige im Browser."
     if not started:
+        log("Anzeige ueber Browser")
         if not args.hintergrund:
             open_ui(url)
         try:
@@ -1335,12 +1386,22 @@ def main():
                 pass
         except KeyboardInterrupt:
             pass
+    log("Ende")
     guard.stop.set()
     if tray:
         tray.close()
     server.shutdown()
     server.server_close()
     return 0
+
+
+def main():
+    try:
+        return run()
+    except Exception:
+        log(traceback.format_exc())
+        message("Kleine Firewall konnte nicht starten:\n\n" + traceback.format_exc()[-900:])
+        return 1
 
 
 if __name__ == "__main__":
