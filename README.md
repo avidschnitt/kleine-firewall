@@ -15,6 +15,7 @@ Die EXE ist nicht signiert: Windows zeigt beim ersten Start eine Warnung
 
 ## Versionen
 
+- **1.5** - Rechtsklick auf das Taskleisten-Symbol zeigt ein Menue mit "Oeffnen" und "Beenden".
 - **1.4** - es gibt nur noch ein Fenster; ein offenes wird nach vorn geholt statt neu geoeffnet.
 - **1.3** - Fenster oeffnet sich in der richtigen Groesse (war winzig bzw. riesig).
 - **1.2** - kleineres, ruhigeres Fenster; Groesse mit A-/A+ einstellbar;

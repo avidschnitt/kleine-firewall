@@ -30,7 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "KleineFirewall"
-VERSION = "1.4"
+VERSION = "1.5"
 PORT = 47615
 TASK = "KleineFirewall"
 # Windows-Protokollkategorie "Filterplattformverbindung" (sprachunabhaengige Kennung)
@@ -328,6 +328,7 @@ class Guard:
         self.error = ""
         self.tray_error = ""
         self.net = None          # aktueller Datenverkehr fuer die Anzeige
+        self.on_quit = None      # wird beim Start gesetzt: beendet das ganze Programm
         self.balloon = None      # Text fuer die naechste Sprechblase in der Taskleiste
         self.last_poll = 0.0     # wann die Oberflaeche zuletzt nachgefragt hat
         self.last_open = time.time()
@@ -924,6 +925,11 @@ class Tray:
         k.GetModuleHandleW.argtypes = [w.LPCWSTR]
         k.GetModuleHandleW.restype = H
         sh.Shell_NotifyIconW.argtypes = [w.DWORD, P(NID)]
+        u.CreatePopupMenu.restype = H
+        u.AppendMenuW.argtypes = [H, ctypes.c_uint, ctypes.c_size_t, w.LPCWSTR]
+        u.TrackPopupMenu.argtypes = [H, ctypes.c_uint, ctypes.c_int, ctypes.c_int, ctypes.c_int, H, H]
+        u.DestroyMenu.argtypes = [H]
+        u.SetForegroundWindow.argtypes = [H]
 
         size = u.GetSystemMetrics(49) or 16  # Groesse kleiner Symbole, passt sich der Bildschirm-Skalierung an
         net = WinNet()
@@ -961,12 +967,29 @@ class Tray:
             else:
                 self.added = bool(sh.Shell_NotifyIconW(0, ctypes.byref(n)))
 
+        def menu():
+            point = w.POINT()
+            u.GetCursorPos(ctypes.byref(point))
+            popup = u.CreatePopupMenu()
+            u.AppendMenuW(popup, 0, 1, "Öffnen")
+            u.AppendMenuW(popup, 0x0800, 0, None)  # Trennlinie
+            u.AppendMenuW(popup, 0, 2, "Beenden")
+            u.SetForegroundWindow(self.hwnd)  # sonst schliesst sich das Menue nicht beim Wegklicken
+            choice = u.TrackPopupMenu(popup, 0x0100 | 0x0002 | 0x0080, point.x, point.y, 0, self.hwnd, None)
+            u.DestroyMenu(popup)
+            if choice == 1:
+                open_ui(self.guard.url)
+            elif choice == 2 and self.guard.on_quit:
+                self.guard.on_quit()
+
         def wndproc(hwnd, msg, wparam, lparam):
             try:
                 if msg == 0x0113:  # Zeitgeber
                     tick()
-                elif msg == self.ICON_MSG and (lparam & 0xFFFF) in (0x0202, 0x0203, 0x0205, 0x0405):
+                elif msg == self.ICON_MSG and (lparam & 0xFFFF) in (0x0202, 0x0203, 0x0405):
                     open_ui(self.guard.url)  # Klick auf Symbol oder Sprechblase
+                elif msg == self.ICON_MSG and (lparam & 0xFFFF) == 0x0205:  # rechte Maustaste
+                    menu()
                 elif msg == taskbar_created:
                     self.added = False
                 elif msg == 0x0010:  # schliessen
@@ -1103,6 +1126,12 @@ def main():
     ui_file.write_text(json.dumps({"url": url}), encoding="utf-8")
 
     guard.url = url
+
+    def quit_all():  # aus dem Menue in der Taskleiste
+        for hwnd in app_windows():
+            ctypes.windll.user32.PostMessageW(ctypes.c_void_p(hwnd), 0x0010, 0, 0)
+        threading.Thread(target=server.shutdown, daemon=True).start()
+    guard.on_quit = quit_all
     if guard.state["mode"] in ("ask", "quiet") and not system.demo:
         try:
             system.enable_log()
