@@ -44,6 +44,7 @@ NATIVE = {"window": None, "quitting": False}  # eigenes Programmfenster, falls v
 
 
 LOG = {"file": None}
+SIZE_CALLS = []  # fuer den Selbsttest
 
 
 def log(text):
@@ -605,17 +606,18 @@ function where(p){
 }
 
 let scale = 0;
-function setScale(v){ if(v != scale){ scale = v; document.querySelector("main").style.zoom = v; fit(); } }
-let fitGoal = "", fitTries = 0, fitBusy = false;
+function setScale(v){ if(v != scale){ scale = v; document.querySelector("main").style.zoom = v; } }
+let fitGoal = "", fitTries = 0, fitBusy = 0, fitSince = 0, rendered = false;
 function fit(){  // dem Programm melden, um wie viel das Fenster vom Inhalt abweicht - es stellt die Groesse dann ein
-  if(document.hidden || fitBusy || !scale) return;
+  const now = Date.now();
+  if(!rendered || !scale || now - fitBusy < 3000) return;
   const box = document.querySelector("main").getBoundingClientRect();
-  const w = Math.ceil(300 * scale), h = Math.ceil(box.height) + 1, goal = w + "x" + h;
-  if(goal != fitGoal){ fitGoal = goal; fitTries = 0; }
+  const w = Math.ceil(300 * scale), h = Math.max(90, Math.ceil(box.height) + 1), goal = w + "x" + h;
+  if(goal != fitGoal || now - fitSince > 10000){ fitGoal = goal; fitTries = 0; fitSince = now; }
   const dw = w - innerWidth, dh = h - innerHeight;
   if((Math.abs(dw) <= 2 && Math.abs(dh) <= 2) || fitTries >= 4) return;
-  fitTries++; fitBusy = true;
-  api("size", {dw, dh, dpr: devicePixelRatio}).catch(() => {}).finally(() => setTimeout(() => { fitBusy = false; fit(); }, 400));
+  fitTries++; fitBusy = now;
+  api("size", {dw, dh, dpr: devicePixelRatio}).catch(() => {}).finally(() => setTimeout(() => { fitBusy = 0; fit(); }, 400));
 }
 function step(d){ const v = Math.min(1.5, Math.max(0.5, Math.round((scale + d) * 10) / 10)); act("scale", {scale: v}); }
 
@@ -680,6 +682,7 @@ function show(s){
       btn("✕", "link", () => act("forget", {path: p.path}), "Vergessen – beim nächsten Mal wird wieder gefragt"));
     list.append(r);
   }
+  rendered = true;
   fit();
 }
 
@@ -1088,6 +1091,8 @@ def app_windows(detail=None):
 
 def resize_window(dw, dh, dpr):
     """Eigenes App-Fenster um (dw, dh) Seiten-Pixel groesser oder kleiner machen."""
+    SIZE_CALLS.append((round(dw), round(dh)))
+    del SIZE_CALLS[:-12]
     if platform.system() != "Windows":
         return
     from ctypes import wintypes as w
@@ -1172,11 +1177,14 @@ def selftest(path, guard, tray):
             raise RuntimeError("kein eigenes Fenster")
         info = win.evaluate_js("document.title + ' | innen ' + innerWidth + 'x' + innerHeight + ' | dpr ' + "
                                "devicePixelRatio + ' | ziel ' + fitGoal + ' | anfragen ' + "
-                               "document.querySelectorAll('.req').length + ' | ' + document.querySelector('h1').innerText")
+                               "document.querySelectorAll('.req').length + ' | ' + document.querySelector('h1').innerText + ' | modus ' + "
+                               "(S && S.mode) + ' versteckt ' + document.hidden + ' versuche ' + fitTries + ' main ' + "
+                               "Math.round(document.querySelector('main').getBoundingClientRect().height) + "
+                               "' app-aus ' + document.getElementById('app').hidden")
         want = [int(v) for v in str(info).split("ziel ")[1].split(" |")[0].split("x")]
         have = [int(v) for v in str(info).split("innen ")[1].split(" |")[0].split("x")]
-        if abs(want[0] - have[0]) > 3 or abs(want[1] - have[1]) > 3:
-            raise RuntimeError(f"Groesse passt nicht: {info}")
+        if abs(want[0] - have[0]) > 3 or abs(want[1] - have[1]) > 3 or want[1] < 200:
+            raise RuntimeError(f"Groesse passt nicht: {info} | Groessen-Aufrufe {SIZE_CALLS}")
         return info
 
     def network():
