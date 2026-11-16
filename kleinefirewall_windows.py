@@ -1047,7 +1047,7 @@ def app_browsers():
     return found
 
 
-def app_windows():
+def app_windows(detail=None):
     """Bereits offene Fenster dieser Oberflaeche (nur das eigene App-Fenster, kein Browser-Tab)."""
     if platform.system() != "Windows":
         return []
@@ -1056,13 +1056,16 @@ def app_windows():
     found = []
 
     def each(hwnd, _):
-        title, cls = ctypes.create_unicode_buffer(200), ctypes.create_unicode_buffer(80)
+        title, cls, pid = ctypes.create_unicode_buffer(200), ctypes.create_unicode_buffer(80), w.DWORD(0)
         u.GetWindowTextW(w.HWND(hwnd), title, 200)
         u.GetClassNameW(w.HWND(hwnd), cls, 80)
-        own = cls.value.startswith("WindowsForms") and title.value == "Kleine Firewall"
+        u.GetWindowThreadProcessId(w.HWND(hwnd), ctypes.byref(pid))
+        own = pid.value == os.getpid() and title.value.endswith("Kleine Firewall")  # eigenes Programmfenster
         browser = cls.value.startswith("Chrome_WidgetWin") and title.value.endswith("Kleine Firewall")
         if (own or browser) and u.IsWindowVisible(w.HWND(hwnd)):
             found.append(hwnd)
+            if detail is not None:
+                detail.append(f"{cls.value} '{title.value}' eigen={own}")
         return True
 
     try:
@@ -1141,7 +1144,7 @@ def selftest(path, guard, tray):
         have = [int(v) for v in str(info).split("innen ")[1].split(" |")[0].split("x")]
         if abs(want[0] - have[0]) > 3 or abs(want[1] - have[1]) > 3:
             raise RuntimeError(f"Groesse passt nicht: {info}")
-        return f"{info} | fenster gefunden: {len(app_windows())}"
+        return info
 
     def network():
         net = WinNet()
@@ -1168,6 +1171,8 @@ def selftest(path, guard, tray):
     time.sleep(12)
     notepad = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "notepad.exe")
     check("Anzeige-Komponente", webview2_version)
+    found = []
+    check("Fensterliste", lambda: (app_windows(found), found)[1], "INFO  ")
     check("Fenster", window)
     check("Datenverkehr", network)
     check("Datei-Angaben", lambda: WinSystem(Path(".")).file_info(notepad) or (_ for _ in ()).throw(RuntimeError("leer")))
@@ -1252,12 +1257,21 @@ def main():
     guard.url = url
 
     done = threading.Event()
+    tray = None
 
     def quit_all():  # Knopf "Beenden", Zuruecksetzen oder Menue in der Taskleiste
         NATIVE["quitting"] = True
         for hwnd in app_windows():
             ctypes.windll.user32.PostMessageW(ctypes.c_void_p(hwnd), 0x0010, 0, 0)
         done.set()
+
+        def force():  # falls das Fenster das Beenden blockiert
+            if tray:
+                tray.close()
+            os._exit(0)
+        timer = threading.Timer(6, force)
+        timer.daemon = True
+        timer.start()
         if NATIVE["window"] is not None:
             try:
                 NATIVE["window"].destroy()
