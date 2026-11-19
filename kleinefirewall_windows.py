@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "KleineFirewall"
-VERSION = "2.9"
+VERSION = "2.10"
 PORT = 47615
 TASK = "KleineFirewall"
 BOOT_TASK = "KleineFirewall-Freigabe"  # oeffnet beim Hochfahren, damit nie unbemerkt gesperrt ist
@@ -184,16 +184,23 @@ class WinSystem:
 
     def check(self):
         """Tatsaechlichen Zustand von Windows nachsehen: (sperrt Windows Unbekanntes?, Anzahl eigener Regeln)."""
-        out = self.cmd(["netsh", "advfirewall", "show", "allprofiles", "firewallpolicy"],
-                       check=False)[1].decode("oem", "replace").lower()
-        blocked = None if "outbound" not in out else "blockoutbound" in out
+        # ueber PowerShell, weil dessen Werte (Allow/Block) nicht in die Windows-Sprache uebersetzt werden
         code, raw = self.cmd(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                              "(Get-NetFirewallProfile | ForEach-Object { [string]$_.DefaultOutboundAction }) -join ','; "
                               "@(Get-NetFirewallRule -DisplayName 'KleineFirewall*' -ErrorAction SilentlyContinue).Count"],
                              check=False)
-        try:
-            rules = int(raw.decode("oem", "replace").strip() or 0)
-        except ValueError:
-            rules = None
+        lines = [line.strip() for line in raw.decode("oem", "replace").splitlines() if line.strip()]
+        blocked = rules = None
+        if len(lines) >= 2:
+            actions = lines[0].lower().split(",")
+            if all(a in ("allow", "block", "notconfigured") for a in actions):
+                blocked = "block" in actions
+            try:
+                rules = int(lines[-1])
+            except ValueError:
+                pass
+        if blocked is None or rules is None:
+            log(f"Zustand nicht lesbar (Code {code}): {lines[:4]}")
         log(f"Zustand: Windows sperrt Unbekanntes={blocked}, eigene Regeln={rules}")
         return blocked, rules
 
