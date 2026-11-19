@@ -41,7 +41,7 @@ AUDIT_GUID = "{0CCE9226-69AE-11D9-BED3-505054503030}"
 NS = "{http://schemas.microsoft.com/win/2004/08/events/event}"
 NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 MODES = ("ask", "quiet", "allow", "off")
-NATIVE = {"window": None, "quitting": False}  # eigenes Programmfenster, falls verfuegbar
+NATIVE = {"window": None, "quitting": False, "anchor": True}  # eigenes Programmfenster, falls verfuegbar
 
 
 LOG = {"file": None}
@@ -1177,6 +1177,31 @@ def app_windows(detail=None):
     return found
 
 
+ANCHOR_GAP = 6  # Abstand zur Bildschirmecke in Bildpunkten
+
+
+def anchor_spot(width, height):
+    """Platz unten rechts ueber der Taskleiste (dort, wo auch das Symbol sitzt)."""
+    from ctypes import wintypes as w
+    area = w.RECT()
+    ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(area), 0)  # nutzbarer Bereich ohne Taskleiste
+    return area.right - width - ANCHOR_GAP, area.bottom - height - ANCHOR_GAP
+
+
+def anchor_window(hwnd, width=None, height=None):
+    """Fenster in die Ecke unten rechts setzen, optional gleich mit neuer Groesse."""
+    from ctypes import wintypes as w
+    u = ctypes.windll.user32
+    rect = w.RECT()
+    if not u.GetWindowRect(w.HWND(hwnd), ctypes.byref(rect)):
+        return
+    width = width or rect.right - rect.left
+    height = height or rect.bottom - rect.top
+    x, y = anchor_spot(width, height)
+    u.SetWindowPos(w.HWND(hwnd), None, x, y, width, height, 0x0004 | 0x0010)
+    NATIVE["anchor"] = False
+
+
 def resize_window(dw, dh, dpr):
     """Eigenes App-Fenster um (dw, dh) Seiten-Pixel groesser oder kleiner machen."""
     SIZE_CALLS.append((round(dw), round(dh)))
@@ -1198,20 +1223,31 @@ def resize_window(dw, dh, dpr):
             continue
         width = max(120, rect.right - rect.left + round(dw * dpr))
         height = min(max_h, max(100, rect.bottom - rect.top + round(dh * dpr)))
-        u.SetWindowPos(hwnd, None, 0, 0, width, height, 0x0002 | 0x0004 | 0x0010)  # nicht verschieben
+        x, y = anchor_spot(rect.right - rect.left, rect.bottom - rect.top)
+        in_corner = abs(rect.left - x) <= 12 and abs(rect.top - y) <= 12
+        if NATIVE["anchor"] or in_corner:  # in der Ecke bleiben, wenn es dort sitzt; sonst nicht verschieben
+            anchor_window(hwnd.value, width, height)
+        else:
+            u.SetWindowPos(hwnd, None, 0, 0, width, height, 0x0002 | 0x0004 | 0x0010)
 
 
 def open_ui(url):
     """Als kleines App-Fenster oeffnen (Edge ist bei Windows dabei), sonst im Standardbrowser.
     Ist das Fenster schon offen, wird es nur nach vorn geholt - es gibt immer nur eins."""
     if NATIVE["window"] is not None:  # eigenes Programmfenster: einblenden
+        NATIVE["anchor"] = True
         try:
             NATIVE["window"].show()
             NATIVE["window"].restore()
         except Exception:
             pass
-        for hwnd in app_windows()[:1]:
-            ctypes.windll.user32.SetForegroundWindow(ctypes.c_void_p(hwnd))
+        for _ in range(15):  # kurz warten, bis das Fenster sichtbar ist
+            found = app_windows()
+            if found:
+                anchor_window(found[0])  # unten rechts bei der Taskleiste
+                ctypes.windll.user32.SetForegroundWindow(ctypes.c_void_p(found[0]))
+                break
+            time.sleep(0.1)
         return
     for hwnd in app_windows()[:1]:
         from ctypes import wintypes as w
@@ -1275,6 +1311,16 @@ def selftest(path, guard, tray):
             raise RuntimeError(f"Groesse passt nicht: {info} | Groessen-Aufrufe {SIZE_CALLS}")
         return info
 
+    def position():
+        from ctypes import wintypes as w
+        found = app_windows()
+        rect = w.RECT()
+        ctypes.windll.user32.GetWindowRect(w.HWND(found[0]), ctypes.byref(rect))
+        x, y = anchor_spot(rect.right - rect.left, rect.bottom - rect.top)
+        if abs(rect.left - x) > 3 or abs(rect.top - y) > 3:
+            raise RuntimeError(f"Fenster bei {rect.left},{rect.top}, erwartet {x},{y}")
+        return f"unten rechts ({rect.left},{rect.top})"
+
     def network():
         net = WinNet()
         net.sample()
@@ -1303,6 +1349,7 @@ def selftest(path, guard, tray):
     found = []
     check("Fensterliste", lambda: (app_windows(found), found)[1], "INFO  ")
     check("Fenster", window)
+    check("Position", position)
     check("Datenverkehr", network)
     check("Datei-Angaben", lambda: WinSystem(Path(".")).file_info(notepad) or (_ for _ in ()).throw(RuntimeError("leer")))
     check("Laufwerke", devices)

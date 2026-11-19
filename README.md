@@ -18,7 +18,7 @@ Die Setup-Datei ist nicht signiert: Windows zeigt eine Warnung
 
 ## Versionen
 
-- **2.7** - "Listen leeren" statt "Alles zuruecksetzen": leert beide Listen, gibt alles frei, das Programm bleibt offen (Modus "Aus"); danach wird geprueft und angezeigt, ob Windows wirklich alles freigibt.
+- **2.7** - Fenster oeffnet sich unten rechts bei der Taskleiste; "Listen leeren" statt "Alles zuruecksetzen": leert beide Listen, gibt alles frei, das Programm bleibt offen (Modus "Aus"); danach wird geprueft und angezeigt, ob Windows wirklich alles freigibt.
 - **2.6** - "Alles zuruecksetzen" und "Aus" entfernen wirklich alle Regeln dieser Firewall, auch uebrig gebliebene aus frueheren Versionen.
 - **2.5** - eine einzige Setup-Datei statt ZIP-Ordner; eigenes Programmsymbol; Eintrag im Startmenue.
 - **2.4** - Schalter "Aus" (Listen bleiben erhalten); nie mehr unbemerkt gesperrt: Freigabe beim Beenden und beim Hochfahren, Sperre nur bei laufendem Programm.
