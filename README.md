@@ -18,6 +18,7 @@ Die Setup-Datei ist nicht signiert: Windows zeigt eine Warnung
 
 ## Versionen
 
+- **2.9** - Rueckfragen erscheinen im Fenster selbst statt als abgeschnittener Windows-Dialog.
 - **2.8** - Fenster oeffnet sich unten rechts bei der Taskleiste.
 - **2.7** - "Listen leeren" statt "Alles zuruecksetzen": leert beide Listen, gibt alles frei, das Programm bleibt offen (Modus "Aus"); danach wird geprueft und angezeigt, ob Windows wirklich alles freigibt.
 - **2.6** - "Alles zuruecksetzen" und "Aus" entfernen wirklich alle Regeln dieser Firewall, auch uebrig gebliebene aus frueheren Versionen.

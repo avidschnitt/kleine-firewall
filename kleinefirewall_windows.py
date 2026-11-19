@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "KleineFirewall"
-VERSION = "2.8"
+VERSION = "2.9"
 PORT = 47615
 TASK = "KleineFirewall"
 BOOT_TASK = "KleineFirewall-Freigabe"  # oeffnet beim Hochfahren, damit nie unbemerkt gesperrt ist
@@ -595,6 +595,11 @@ button:focus-visible{outline:2px solid var(--text);outline-offset:1px}
 .foot{display:flex;gap:1px;align-items:center;margin-top:6px;color:var(--muted);font-size:10.5px}
 .foot label{display:flex;gap:4px;align-items:center;cursor:pointer;margin-right:auto}
 .foot input{margin:0;width:11px;height:11px}
+#ask{position:fixed;inset:0;background:rgba(20,22,26,.45);display:flex;align-items:center;justify-content:center;padding:10px}
+#ask[hidden]{display:none}
+#ask .card{padding:10px;max-width:280px;box-shadow:0 4px 18px rgba(0,0,0,.3)}
+#ask p{margin:0 0 9px}
+#ask .btn-big{padding:3px 8px}
 #toast{position:fixed;left:50%;bottom:8px;transform:translateX(-50%);width:max-content;max-width:94vw;cursor:pointer;padding:5px 9px;border-radius:6px;
 background:var(--bad);color:#fff;display:none;white-space:pre-wrap;font-size:10.5px}
 </style></head><body><main>
@@ -645,6 +650,8 @@ background:var(--bad);color:#fff;display:none;white-space:pre-wrap;font-size:10.
   </div>
 </div>
 </main><div id="toast"></div>
+<div id="ask" hidden><div class="card"><p id="asktext"></p>
+  <div class="acts"><button id="askno">Abbrechen</button><button id="askyes" class="btn-big"></button></div></div></div>
 
 <script>
 const TOKEN = "__TOKEN__", $ = id => document.getElementById(id);
@@ -656,6 +663,15 @@ async function api(path, body){
   const j = await r.json();
   if(!r.ok) throw new Error(j.error || "Fehler");
   return j;
+}
+function ask(text, yes){  // eigene Rueckfrage statt des Windows-Dialogs, der im kleinen Fenster abgeschnitten wird
+  return new Promise(done => {
+    $("asktext").textContent = text; $("askyes").textContent = yes; $("ask").hidden = false;
+    const close = v => { $("ask").hidden = true; done(v); };
+    $("askyes").onclick = () => close(true); $("askno").onclick = () => close(false);
+    $("ask").onclick = e => { if(e.target.id == "ask") close(false); };
+    $("askno").focus();
+  });
 }
 function toast(t, info){ const e = $("toast"); e.textContent = t; e.style.display = "block";
   e.style.background = info ? "var(--accent)" : ""; e.style.color = info ? "var(--card)" : "";
@@ -682,7 +698,7 @@ function where(p){
 }
 
 let scale = 0;
-function setScale(v){ if(v != scale){ scale = v; document.querySelector("main").style.zoom = v; } }
+function setScale(v){ if(v != scale){ scale = v; for(const e of [document.querySelector("main"), $("ask"), $("toast")]) e.style.zoom = v; } }
 let fitGoal = "", fitTries = 0, fitBusy = 0, fitSince = 0, rendered = false;
 function fit(){  // dem Programm melden, um wie viel das Fenster vom Inhalt abweicht - es stellt die Groesse dann ein
   const now = Date.now();
@@ -771,12 +787,12 @@ for(const t of document.querySelectorAll(".tab")) t.onclick = () => { tab = t.da
 $("auto").onchange = e => act("autostart", {on: e.target.checked});
 $("notifybtn").onclick = async () => { await Notification.requestPermission(); lastJson = ""; show(S); };
 $("reset").onclick = async () => {
-  if(!confirm("Beide Listen leeren und alles freigeben? Die Firewall bleibt offen und steht danach auf „Aus“.")) return;
+  if(!await ask("Beide Listen leeren und alles freigeben? Die Firewall bleibt offen und steht danach auf „Aus“.", "Listen leeren")) return;
   try{ const r = await api("reset", {}); show(r);
     toast(r.report + " Programme, die vorher gesperrt waren, merken das oft erst, wenn man sie neu startet.", true);
   }catch(e){ toast(e.message); } };
 $("quit").onclick = async () => {
-  if(!confirm("Beenden? Dann darf wieder alles ins Internet, außer was auf deiner Sperrliste steht.")) return;
+  if(!await ask("Beenden? Dann darf wieder alles ins Internet, außer was auf deiner Sperrliste steht.", "Beenden")) return;
   try{ await api("quit", {}); }catch(e){} bye("Kleine Firewall wurde beendet. Es wird nichts Unbekanntes mehr gesperrt; deine Sperrliste gilt weiter."); };
 function bye(text){ clearInterval(timer); document.querySelector("main").replaceChildren(el("div", "card empty", text)); }
 const tick = () => api("state").then(s => { show(s); fit(); }).catch(() => {});
