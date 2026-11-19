@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "KleineFirewall"
-VERSION = "2.7"
+VERSION = "2.8"
 PORT = 47615
 TASK = "KleineFirewall"
 BOOT_TASK = "KleineFirewall-Freigabe"  # oeffnet beim Hochfahren, damit nie unbemerkt gesperrt ist
