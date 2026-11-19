@@ -18,6 +18,7 @@ Die Setup-Datei ist nicht signiert: Windows zeigt eine Warnung
 
 ## Versionen
 
+- **3.0** - gleicher Stand wie 2.10, nur mit eindeutiger Nummer (2.10 wirkte aelter als 2.8).
 - **2.10** - die Pruefung nach "Listen leeren" funktioniert auch auf deutschem Windows (zeigte "unklar").
 - **2.9** - Rueckfragen erscheinen im Fenster selbst statt als abgeschnittener Windows-Dialog.
 - **2.8** - Fenster oeffnet sich unten rechts bei der Taskleiste.
