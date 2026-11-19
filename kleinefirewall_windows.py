@@ -32,14 +32,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "KleineFirewall"
-VERSION = "2.3"
+VERSION = "2.4"
 PORT = 47615
 TASK = "KleineFirewall"
+BOOT_TASK = "KleineFirewall-Freigabe"  # oeffnet beim Hochfahren, damit nie unbemerkt gesperrt ist
 # Windows-Protokollkategorie "Filterplattformverbindung" (sprachunabhaengige Kennung)
 AUDIT_GUID = "{0CCE9226-69AE-11D9-BED3-505054503030}"
 NS = "{http://schemas.microsoft.com/win/2004/08/events/event}"
 NOWIN = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-MODES = ("ask", "quiet", "allow")
+MODES = ("ask", "quiet", "allow", "off")
 NATIVE = {"window": None, "quitting": False}  # eigenes Programmfenster, falls verfuegbar
 
 
@@ -288,7 +289,14 @@ class WinSystem:
             target = f'"{sys.executable}" --hintergrund'
         self.cmd(["schtasks", "/create", "/tn", TASK, "/tr", target, "/sc", "onlogon", "/rl", "highest", "/f"])
 
+    def ensure_boot_task(self):
+        """Bei jedem Hochfahren zuerst alles freigeben. Gesperrt wird erst wieder, wenn das Programm laeuft
+        und fragen kann - so bleibt nie etwas unbemerkt blockiert."""
+        self.cmd(["schtasks", "/create", "/tn", BOOT_TASK, "/sc", "onstart", "/ru", "SYSTEM", "/f", "/tr",
+                  "netsh advfirewall set allprofiles firewallpolicy blockinbound,allowoutbound"])
+
     def reset(self, paths):
+        self.cmd(["schtasks", "/delete", "/tn", BOOT_TASK, "/f"], check=False)
         for path in paths:
             self.delete_rule(path)
         self.cmd(["netsh", "advfirewall", "set", "allprofiles", "firewallpolicy",
@@ -322,6 +330,7 @@ class DemoSystem:
     def autostart(self): return self._auto
     def set_autostart(self, on): self._auto = on
     def reset(self, paths): pass
+    def ensure_boot_task(self): pass
 
     def file_info(self, path):
         return {"firefox.exe": {"company": "Mozilla Corporation", "desc": "Firefox"},
@@ -380,9 +389,19 @@ class Guard:
                 if svchost.lower() not in self.state["programs"]:
                     self.sys.add_rule(svchost, "allow", ["out"])
                     self.state["programs"][svchost.lower()] = {"path": svchost, "action": "allow", "dirs": ["out"]}
-            self.sys.set_policy(block_out=(mode != "allow"))
-            if mode == "allow":
+            if mode in ("ask", "quiet"):
+                self.sys.ensure_boot_task()
+            self.sys.set_policy(block_out=mode in ("ask", "quiet"))
+            if mode in ("allow", "off"):
                 self.pending.clear()
+            active = mode != "off"  # "Aus": eigene Regeln ruhen, die Listen bleiben gespeichert
+            if active != self.state.get("active", True):
+                for prog in self.state["programs"].values():
+                    if active:
+                        self.sys.add_rule(prog["path"], prog["action"], prog.get("dirs", ["out"]))
+                    else:
+                        self.sys.delete_rule(prog["path"])
+                self.state["active"] = active
             self.state["mode"] = mode
             self.save()
 
@@ -395,7 +414,8 @@ class Guard:
             want = self.pending.get(key, {}).get("dirs", [])
             keep = old.get("dirs", []) if old.get("action") == "allow" else []
             dirs = ["in", "out"] if action == "block" else sorted({"out", *keep, *want})
-            self.sys.add_rule(path, action, dirs)
+            if self.state.get("active", True):
+                self.sys.add_rule(path, action, dirs)
             self.state["programs"][key] = {"path": path, "action": action, "dirs": dirs}
             self.pending.pop(key, None)
             self.save()
@@ -512,7 +532,7 @@ button:focus-visible{outline:2px solid var(--text);outline-offset:1px}
 .link{border:0;color:var(--muted);padding:2px 4px;font-size:10.5px}
 .link:hover{color:var(--text)}
 .modes{display:flex;border:1px solid var(--line);border-radius:6px;padding:2px;gap:2px}
-.mode{flex:1;border:0;padding:3px 2px;font-size:11px;color:var(--muted);white-space:nowrap}
+.mode{flex:1 1 auto;border:0;padding:3px 3px;font-size:11px;color:var(--muted);white-space:nowrap}
 .mode.sel{background:var(--accent);color:var(--card);font-weight:600}
 .req{padding:6px 7px;margin-bottom:4px}
 .info{flex:1;min-width:0}
@@ -562,6 +582,7 @@ background:var(--bad);color:#fff;display:none;white-space:pre-wrap;font-size:10.
     <button class="mode" data-m="ask" title="Bei jedem neuen Programm entscheidest du.">Fragen</button>
     <button class="mode" data-m="quiet" title="Neues bleibt still gesperrt und wartet hier auf dich.">Nicht stören</button>
     <button class="mode" data-m="allow" title="Alles darf raus – außer was du gesperrt hast.">Alles erlauben</button>
+    <button class="mode" data-m="off" style="flex:0 0 auto;padding-left:8px;padding-right:8px" title="Firewall aus: nichts wird gesperrt, deine Listen bleiben gespeichert.">Aus</button>
   </div>
   <div id="notify" class="banner warn" hidden>Auch im Hintergrund Bescheid bekommen?
     <button id="notifybtn" style="margin-left:6px">Hinweise einschalten</button></div>
@@ -658,7 +679,8 @@ function show(s){
   $("error").hidden = !s.error; $("error").textContent = s.error;
   $("welcome").hidden = s.mode != null; $("app").hidden = s.mode == null;
   $("sub").textContent = {null: "Schutz ist noch aus", ask: "Schutz aktiv – du wirst gefragt",
-    quiet: "Schutz aktiv – Neues bleibt still gesperrt", allow: "Alles darf raus, außer deiner Sperrliste"}[s.mode];
+    quiet: "Schutz aktiv – Neues bleibt still gesperrt", allow: "Alles darf raus, außer deiner Sperrliste",
+    off: "Aus – nichts wird gesperrt"}[s.mode];
   for(const b of $("modes").children) b.classList.toggle("sel", b.dataset.m == s.mode);
   $("notify").hidden = !(s.mode == "ask" && !s.native && window.Notification && Notification.permission == "default");
   $("auto").checked = !!s.autostart;
@@ -666,7 +688,7 @@ function show(s){
   $("reqtitle").textContent = s.pending.length ? "Anfragen (" + s.pending.length + ")" : "Anfragen";
   const reqs = $("reqs"); reqs.replaceChildren();
   if(!s.pending.length) reqs.append(el("div", "card empty",
-    s.mode == "allow" ? "In diesem Modus wird nicht gefragt." : "Alles ruhig."));
+    s.mode == "off" ? "Die Firewall ist aus." : s.mode == "allow" ? "In diesem Modus wird nicht gefragt." : "Alles ruhig."));
   for(const p of s.pending){
     const c = el("div", "card req"), top = el("div", "top"), info = el("div", "info");
     info.append(el("b", "", p.desc || p.name), el("div", "path", [fileOf(p.path), p.company].filter(Boolean).join(" · ")));
@@ -713,8 +735,8 @@ $("reset").onclick = async () => {
   if(!confirm("Alle Regeln dieser Firewall löschen und Windows wieder so einstellen, dass alles ins Internet darf?")) return;
   try{ await api("reset", {}); bye("Alles zurückgesetzt."); }catch(e){ toast(e.message); } };
 $("quit").onclick = async () => {
-  if(!confirm("Beenden? Deine Regeln bleiben aktiv, aber du wirst nicht mehr gefragt – Neues bleibt gesperrt.")) return;
-  try{ await api("quit", {}); }catch(e){} bye("Kleine Firewall wurde beendet. Deine Regeln bleiben aktiv."); };
+  if(!confirm("Beenden? Dann darf wieder alles ins Internet, außer was auf deiner Sperrliste steht.")) return;
+  try{ await api("quit", {}); }catch(e){} bye("Kleine Firewall wurde beendet. Es wird nichts Unbekanntes mehr gesperrt; deine Sperrliste gilt weiter."); };
 function bye(text){ clearInterval(timer); document.querySelector("main").replaceChildren(el("div", "card empty", text)); }
 const tick = () => api("state").then(s => { show(s); fit(); }).catch(() => {});
 const timer = setInterval(tick, 1500); tick();
@@ -1239,6 +1261,26 @@ def selftest(path, guard, tray):
     check("Autostart-Abfrage", lambda: WinSystem(Path(".")).autostart())
     check("Browser-Ersatz", app_browsers, "INFO  ")
     check("Taskleiste", tray_state, "INFO  ")
+    if os.environ.get("GITHUB_ACTIONS") == "true":  # nur auf dem Bau-Rechner: echtes Umschalten pruefen
+        ws = WinSystem(Path("."))
+
+        def policy(want):
+            out = ws.cmd(["netsh", "advfirewall", "show", "allprofiles", "firewallpolicy"])[1].decode("oem", "replace")
+            if out.count(want) != 3:
+                raise RuntimeError(f"erwartet 3x {want}: {' '.join(out.split())[:300]}")
+            return f"3x {want}"
+
+        def boot_task():
+            ws.ensure_boot_task()
+            found = ws.cmd(["schtasks", "/query", "/tn", BOOT_TASK], check=False)[0] == 0
+            ws.cmd(["schtasks", "/delete", "/tn", BOOT_TASK, "/f"], check=False)
+            if not found:
+                raise RuntimeError("Aufgabe nicht angelegt")
+            return "angelegt und wieder entfernt"
+
+        check("Sperren", lambda: (ws.set_policy(True), policy("BlockOutbound"))[1])
+        check("Freigeben", lambda: (ws.set_policy(False), policy("AllowOutbound"))[1])
+        check("Freigabe beim Hochfahren", boot_task)
     check("Fehlermeldung", lambda: guard.error or guard.tray_error or "keine")
     try:
         Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -1335,7 +1377,15 @@ def run():
     tray = None
 
     def quit_all():  # Knopf "Beenden", Zuruecksetzen oder Menue in der Taskleiste
+        if NATIVE["quitting"]:
+            return
         NATIVE["quitting"] = True
+        if not system.demo and guard.state["mode"] in ("ask", "quiet"):
+            try:  # ohne laufendes Programm fragt niemand -> nichts Unbekanntes mehr sperren
+                system.set_policy(block_out=False)
+                log("Beim Beenden freigegeben")
+            except SysError as e:
+                log(f"Freigeben beim Beenden fehlgeschlagen: {e}")
         for hwnd in app_windows():
             ctypes.windll.user32.PostMessageW(ctypes.c_void_p(hwnd), 0x0010, 0, 0)
         done.set()
@@ -1356,6 +1406,9 @@ def run():
     if guard.state["mode"] in ("ask", "quiet") and not system.demo:
         try:
             system.enable_log()
+            system.ensure_boot_task()
+            system.set_policy(block_out=True)  # war beim Beenden / Hochfahren freigegeben
+            log("Sperre fuer Unbekanntes aktiv")
         except SysError as e:
             guard.error = str(e)
     if not system.demo:

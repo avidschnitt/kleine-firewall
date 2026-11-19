@@ -17,6 +17,7 @@ Die EXE ist nicht signiert: Windows zeigt beim ersten Start eine Warnung
 
 ## Versionen
 
+- **2.4** - Schalter "Aus" (Listen bleiben erhalten); nie mehr unbemerkt gesperrt: Freigabe beim Beenden und beim Hochfahren, Sperre nur bei laufendem Programm.
 - **2.3** - eigenes Fenster startet auch nach dem Entpacken eines heruntergeladenen ZIP; sonst Anzeige ueber den Browser.
 - **2.2** - loest eine noch laufende aeltere Version selbst ab; zeigt eine Meldung statt stumm zu scheitern; schreibt ein Protokoll.
 - **2.1** - als Ordner im ZIP statt als einzelne EXE (weniger Fehlalarme bei Virenscannern); jeder Build wird mit Windows Defender geprueft.
@@ -36,13 +37,15 @@ Die EXE ist nicht signiert: Windows zeigt beim ersten Start eine Warnung
 - **Fragen** (Standard): neue Programme erscheinen als Anfrage - Erlauben oder Sperren.
 - **Nicht stoeren**: Neues bleibt still gesperrt und wartet als Anfrage.
 - **Alles erlauben**: alles darf raus, nur die Sperrliste gilt.
+- **Aus**: die Firewall ruht komplett, auch die Sperrliste; die Listen bleiben gespeichert.
 - Symbol in der Taskleiste: oben Out, unten In. Klick oeffnet das Fenster.
 
 Gut zu wissen:
 - Der erste Verbindungsversuch eines neuen Programms scheitert; nach
   "Erlauben" klappt der naechste.
-- Laeuft das Programm nicht, bleibt Neues gesperrt, aber niemand fragt -
-  dafuer gibt es den Haken "Mit Windows starten".
+- Gesperrt wird Unbekanntes nur, solange das Programm laeuft und fragen kann.
+  Beim Beenden und bei jedem Hochfahren wird freigegeben; die Sperrliste gilt
+  immer. Mit dem Haken "Mit Windows starten" beginnt der Schutz nach der Anmeldung.
 - Alles rueckgaengig: Knopf "Alles zuruecksetzen" oder
   `KleineFirewall-<Nummer>.exe --zuruecksetzen`.
 - Nur ansehen, ohne etwas zu veraendern: `KleineFirewall-<Nummer>.exe --demo`.
