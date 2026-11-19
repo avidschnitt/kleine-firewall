@@ -1,7 +1,7 @@
 name: EXE bauen
 on:
   push:
-    paths: ["kleinefirewall_windows.py", ".github/workflows/exe-bauen.yml"]
+    paths: ["kleinefirewall_windows.py", "installer.iss", "kleinefirewall.ico", ".github/workflows/exe-bauen.yml"]
   workflow_dispatch:
 permissions:
   contents: write
@@ -18,40 +18,51 @@ jobs:
         id: v
         shell: bash
         run: echo "nr=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' kleinefirewall_windows.py)" >> "$GITHUB_OUTPUT"
-      # Als Ordner statt als eine sich selbst entpackende Datei: loest seltener Fehlalarme bei Virenscannern aus
-      - run: pyinstaller --onedir --noconsole --uac-admin --name KleineFirewall-${{ steps.v.outputs.nr }} kleinefirewall_windows.py
-      - name: Dateien wie nach einem Download markieren
+      - run: pyinstaller --onedir --noconsole --uac-admin --icon kleinefirewall.ico --name KleineFirewall kleinefirewall_windows.py
+      - name: Installationsprogramm bauen
         shell: pwsh
+        env:
+          KF_VERSION: ${{ steps.v.outputs.nr }}
         run: |
-          Get-ChildItem "dist\KleineFirewall-${{ steps.v.outputs.nr }}" -Recurse -File | Where-Object { $_.Extension -ne ".exe" } | ForEach-Object {
-            Set-Content -LiteralPath $_.FullName -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3"
-          }
-      - name: Selbsttest
-        timeout-minutes: 6
-        shell: pwsh
-        run: |
-          $exe = "dist\KleineFirewall-${{ steps.v.outputs.nr }}\KleineFirewall-${{ steps.v.outputs.nr }}.exe"
-          $p = Start-Process $exe -ArgumentList "--selbsttest", "$PWD\selbsttest.txt" -PassThru
-          if (-not $p.WaitForExit(180000)) { $p.Kill(); Write-Host "Zeitueberschreitung" }
-          Write-Host "Exit-Code: $($p.ExitCode)"
-          if (Test-Path selbsttest.txt) { Get-Content selbsttest.txt } else { Write-Host "FEHLER keine Ausgabe"; exit 1 }
-          if (Select-String -Path selbsttest.txt -Pattern "^FEHLER" -Quiet) { exit 1 }
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc installer.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Get-Item "KleineFirewall-Setup-$env:KF_VERSION.exe" | Format-List Name, Length
       - name: Virenpruefung mit Windows Defender
         shell: pwsh
         run: |
           $mp = "C:\Program Files\Windows Defender\MpCmdRun.exe"
           & $mp -SignatureUpdate | Select-Object -Last 2
-          $dir = "$PWD\dist\KleineFirewall-${{ steps.v.outputs.nr }}"
-          & $mp -Scan -ScanType 3 -File $dir -DisableRemediation
-          Write-Host "Defender-Ergebnis: $LASTEXITCODE (0 = nichts gefunden, 2 = Fund)"
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-      - name: ZIP packen
+          foreach ($ziel in "$PWD\dist\KleineFirewall", "$PWD\KleineFirewall-Setup-${{ steps.v.outputs.nr }}.exe") {
+            & $mp -Scan -ScanType 3 -File $ziel -DisableRemediation
+            Write-Host "Defender-Ergebnis: $LASTEXITCODE (0 = nichts gefunden, 2 = Fund)"
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+      - name: Installieren und Selbsttest
+        timeout-minutes: 8
         shell: pwsh
-        run: Compress-Archive -Path "dist\KleineFirewall-${{ steps.v.outputs.nr }}" -DestinationPath "KleineFirewall-${{ steps.v.outputs.nr }}.zip"
+        run: |
+          $p = Start-Process "KleineFirewall-Setup-${{ steps.v.outputs.nr }}.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -PassThru
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); Write-Host "FEHLER Installation haengt"; exit 1 }
+          Write-Host "Installation Exit-Code: $($p.ExitCode)"
+          $exe = "C:\Program Files\Kleine Firewall\KleineFirewall.exe"
+          if (-not (Test-Path $exe)) { Write-Host "FEHLER nicht installiert"; exit 1 }
+          Write-Host "Startmenue-Eintrag: $(Test-Path 'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Kleine Firewall\Kleine Firewall.lnk')"
+          $p = Start-Process $exe -ArgumentList "--selbsttest", "$PWD\selbsttest.txt" -PassThru
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); Write-Host "Zeitueberschreitung" }
+          Write-Host "Exit-Code: $($p.ExitCode)"
+          if (Test-Path selbsttest.txt) { Get-Content selbsttest.txt } else { Write-Host "FEHLER keine Ausgabe"; exit 1 }
+          if (Select-String -Path selbsttest.txt -Pattern "^FEHLER" -Quiet) { exit 1 }
+          $p = Start-Process "C:\Program Files\Kleine Firewall\unins000.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -PassThru
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); Write-Host "FEHLER Deinstallation haengt"; exit 1 }
+          Start-Sleep 5
+          Write-Host "Nach Deinstallation noch vorhanden: $(Test-Path $exe)"
+          if (Test-Path $exe) { exit 1 }
       - uses: actions/upload-artifact@v4
         with:
-          name: KleineFirewall-${{ steps.v.outputs.nr }}
-          path: KleineFirewall-${{ steps.v.outputs.nr }}.zip
+          name: KleineFirewall-Setup-${{ steps.v.outputs.nr }}
+          path: KleineFirewall-Setup-${{ steps.v.outputs.nr }}.exe
       - name: Als Version veroeffentlichen
         if: github.ref == 'refs/heads/main'
         shell: bash
@@ -59,6 +70,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="v${{ steps.v.outputs.nr }}"
-          zip="KleineFirewall-${{ steps.v.outputs.nr }}.zip"
-          gh release create "$tag" "$zip" --title "Kleine Firewall $tag" --notes "Automatisch gebaut. ZIP entpacken, Ordner behalten, darin die EXE starten." \
-            || gh release upload "$tag" "$zip" --clobber
+          datei="KleineFirewall-Setup-${{ steps.v.outputs.nr }}.exe"
+          gh release create "$tag" "$datei" --title "Kleine Firewall $tag" --notes "Automatisch gebaut. Die Setup-Datei herunterladen und ausfuehren." \
+            || gh release upload "$tag" "$datei" --clobber

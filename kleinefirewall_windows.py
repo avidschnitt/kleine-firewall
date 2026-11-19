@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "KleineFirewall"
-VERSION = "2.4"
+VERSION = "2.5"
 PORT = 47615
 TASK = "KleineFirewall"
 BOOT_TASK = "KleineFirewall-Freigabe"  # oeffnet beim Hochfahren, damit nie unbemerkt gesperrt ist
@@ -1288,6 +1288,19 @@ def selftest(path, guard, tray):
         guard.on_quit()
 
 
+def stop_running(port, ui_file):
+    """Ein bereits laufendes Exemplar (auch eine aeltere Version) bitten, sich zu beenden."""
+    try:
+        old = json.loads(ui_file.read_text(encoding="utf-8"))["url"].split("?t=")[1]
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/quit", data=b"{}", method="POST",
+                                     headers={"X-Token": old, "Content-Type": "application/json"})
+        urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=5).read()
+        return True
+    except Exception as e:
+        log(f"Kein laufendes Exemplar beendet: {e}")
+        return False
+
+
 def is_admin():
     try:
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
@@ -1308,6 +1321,7 @@ def run():
     ap.add_argument("--port", type=int, default=PORT, help=argparse.SUPPRESS)
     ap.add_argument("--browser", action="store_true", help="Oberflaeche im Browser statt im eigenen Fenster")
     ap.add_argument("--selbsttest", metavar="DATEI", help=argparse.SUPPRESS)
+    ap.add_argument("--beenden", action="store_true", help="ein laufendes Exemplar beenden")
     args = ap.parse_args()
     if args.selbsttest:
         args.demo = True
@@ -1340,6 +1354,11 @@ def run():
     unblock_files()
     threading.excepthook = lambda a: log("Fehler in Nebenaufgabe: " + "".join(
         traceback.format_exception(a.exc_type, a.exc_value, a.exc_traceback))[-1500:])
+    if args.beenden or args.zuruecksetzen:
+        if stop_running(args.port, ui_file):
+            time.sleep(3)  # dem laufenden Exemplar Zeit zum Aufraeumen geben
+        if args.beenden:
+            return 0
     if args.zuruecksetzen:
         Guard(system, state_dir, "").reset()
         say("Zurueckgesetzt: Regeln entfernt, ausgehende Verbindungen wieder erlaubt.")
@@ -1355,13 +1374,7 @@ def run():
         except OSError:
             if attempt == 0:  # laeuft schon (evtl. aeltere Version) -> diese beenden und uebernehmen
                 log("Programm laeuft bereits - bitte es, sich zu beenden")
-                try:
-                    old = json.loads(ui_file.read_text(encoding="utf-8"))["url"].split("?t=")[1]
-                    req = urllib.request.Request(f"http://127.0.0.1:{args.port}/api/quit", data=b"{}", method="POST",
-                                                 headers={"X-Token": old, "Content-Type": "application/json"})
-                    urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=5).read()
-                except Exception as e:
-                    log(f"Beenden der laufenden Version nicht moeglich: {e}")
+                stop_running(args.port, ui_file)
             time.sleep(0.5)
     if server is None:
         message("Kleine Firewall läuft bereits und ließ sich nicht ablösen.\n\n"

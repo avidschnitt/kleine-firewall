@@ -5,18 +5,20 @@ Windows-Firewall, kein eigener Treiber.
 
 ![Oberflaeche](vorschau.png)
 
-## Herunterladen
+## Herunterladen und installieren
 
-Rechts auf **Releases** klicken und bei der neuesten Version die Datei
-`KleineFirewall-<Nummer>.zip` herunterladen. ZIP entpacken, den Ordner an einen
-festen Platz legen und darin `KleineFirewall-<Nummer>.exe` starten. Der Ordner
-`_internal` daneben gehoert dazu und muss bleiben.
+Rechts auf **Releases** klicken und bei der neuesten Version
+`KleineFirewall-Setup-<Nummer>.exe` herunterladen und ausfuehren. Danach steht
+"Kleine Firewall" im Startmenue. Eine neue Version einfach darueber installieren.
+Entfernen: Windows-Einstellungen -> Apps -> Kleine Firewall -> Deinstallieren
+(setzt dabei alles zurueck).
 
-Die EXE ist nicht signiert: Windows zeigt beim ersten Start eine Warnung
+Die Setup-Datei ist nicht signiert: Windows zeigt eine Warnung
 ("Weitere Informationen" -> "Trotzdem ausfuehren").
 
 ## Versionen
 
+- **2.5** - eine einzige Setup-Datei statt ZIP-Ordner; eigenes Programmsymbol; Eintrag im Startmenue.
 - **2.4** - Schalter "Aus" (Listen bleiben erhalten); nie mehr unbemerkt gesperrt: Freigabe beim Beenden und beim Hochfahren, Sperre nur bei laufendem Programm.
 - **2.3** - eigenes Fenster startet auch nach dem Entpacken eines heruntergeladenen ZIP; sonst Anzeige ueber den Browser.
 - **2.2** - loest eine noch laufende aeltere Version selbst ab; zeigt eine Meldung statt stumm zu scheitern; schreibt ein Protokoll.
@@ -47,5 +49,5 @@ Gut zu wissen:
   Beim Beenden und bei jedem Hochfahren wird freigegeben; die Sperrliste gilt
   immer. Mit dem Haken "Mit Windows starten" beginnt der Schutz nach der Anmeldung.
 - Alles rueckgaengig: Knopf "Alles zuruecksetzen" oder
-  `KleineFirewall-<Nummer>.exe --zuruecksetzen`.
-- Nur ansehen, ohne etwas zu veraendern: `KleineFirewall-<Nummer>.exe --demo`.
+  `KleineFirewall.exe --zuruecksetzen`.
+- Nur ansehen, ohne etwas zu veraendern: `KleineFirewall.exe --demo`.
