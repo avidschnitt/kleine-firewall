@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "KleineFirewall"
-VERSION = "2.6"
+VERSION = "2.7"
 PORT = 47615
 TASK = "KleineFirewall"
 BOOT_TASK = "KleineFirewall-Freigabe"  # oeffnet beim Hochfahren, damit nie unbemerkt gesperrt ist
@@ -181,6 +181,21 @@ class WinSystem:
                               "$r = @(Get-NetFirewallRule -DisplayName 'KleineFirewall*' -ErrorAction SilentlyContinue); "
                               "if ($r.Count) { $r | Remove-NetFirewallRule }; $r.Count"], check=False)
         log(f"Regeln entfernt: {out.decode('oem', 'replace').strip()} (Code {code})")
+
+    def check(self):
+        """Tatsaechlichen Zustand von Windows nachsehen: (sperrt Windows Unbekanntes?, Anzahl eigener Regeln)."""
+        out = self.cmd(["netsh", "advfirewall", "show", "allprofiles", "firewallpolicy"],
+                       check=False)[1].decode("oem", "replace").lower()
+        blocked = None if "outbound" not in out else "blockoutbound" in out
+        code, raw = self.cmd(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                              "@(Get-NetFirewallRule -DisplayName 'KleineFirewall*' -ErrorAction SilentlyContinue).Count"],
+                             check=False)
+        try:
+            rules = int(raw.decode("oem", "replace").strip() or 0)
+        except ValueError:
+            rules = None
+        log(f"Zustand: Windows sperrt Unbekanntes={blocked}, eigene Regeln={rules}")
+        return blocked, rules
 
     def svchost(self):
         return ntpath.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "svchost.exe")
@@ -341,6 +356,7 @@ class DemoSystem:
     def reset(self, paths): pass
     def ensure_boot_task(self): pass
     def purge_rules(self): pass
+    def check(self): return False, 0
 
     def file_info(self, path):
         return {"firefox.exe": {"company": "Mozilla Corporation", "desc": "Firefox"},
@@ -395,10 +411,11 @@ class Guard:
         with self.lock:
             if self.state["mode"] is None:
                 self.sys.setup()
+            if mode in ("ask", "quiet") and not self.state["programs"]:
                 svchost = self.sys.svchost()  # Windows-Dienste (Updates, Uhrzeit) vorab erlauben
-                if svchost.lower() not in self.state["programs"]:
+                self.state["programs"][svchost.lower()] = {"path": svchost, "action": "allow", "dirs": ["out"]}
+                if self.state.get("active", True):
                     self.sys.add_rule(svchost, "allow", ["out"])
-                    self.state["programs"][svchost.lower()] = {"path": svchost, "action": "allow", "dirs": ["out"]}
             if mode in ("ask", "quiet"):
                 self.sys.ensure_boot_task()
             self.sys.set_policy(block_out=mode in ("ask", "quiet"))
@@ -411,6 +428,7 @@ class Guard:
                     for prog in self.state["programs"].values():
                         self.sys.add_rule(prog["path"], prog["action"], prog.get("dirs", ["out"]))
                 self.state["active"] = active
+                self.sys.check()
             self.state["mode"] = mode
             self.save()
 
@@ -441,6 +459,16 @@ class Guard:
             self.state = {"mode": None, "programs": {}, "scale": self.state.get("scale")}
             self.pending.clear()
             self.save()
+
+    def clear(self):
+        """Listen leeren und alles freigeben - das Programm laeuft weiter und steht danach auf 'Aus'."""
+        with self.lock:
+            self.sys.purge_rules()
+            self.sys.set_policy(block_out=False)
+            self.state.update(mode="off", programs={}, active=False)
+            self.pending.clear()
+            self.save()
+            return self.sys.check()
 
     def snapshot(self):
         with self.lock:
@@ -567,7 +595,7 @@ button:focus-visible{outline:2px solid var(--text);outline-offset:1px}
 .foot{display:flex;gap:1px;align-items:center;margin-top:6px;color:var(--muted);font-size:10.5px}
 .foot label{display:flex;gap:4px;align-items:center;cursor:pointer;margin-right:auto}
 .foot input{margin:0;width:11px;height:11px}
-#toast{position:fixed;left:50%;bottom:8px;transform:translateX(-50%);width:max-content;max-width:94vw;padding:5px 9px;border-radius:6px;
+#toast{position:fixed;left:50%;bottom:8px;transform:translateX(-50%);width:max-content;max-width:94vw;cursor:pointer;padding:5px 9px;border-radius:6px;
 background:var(--bad);color:#fff;display:none;white-space:pre-wrap;font-size:10.5px}
 </style></head><body><main>
 <header>
@@ -612,7 +640,7 @@ background:var(--bad);color:#fff;display:none;white-space:pre-wrap;font-size:10.
   </div>
   <div class="foot" style="margin-top:0">
     <span style="margin-right:auto"></span>
-    <button class="link" id="reset">Alles zurücksetzen</button>
+    <button class="link" id="reset" title="Beide Listen leeren und alles freigeben">Listen leeren</button>
     <button class="link" id="quit">Beenden</button>
   </div>
 </div>
@@ -629,8 +657,10 @@ async function api(path, body){
   if(!r.ok) throw new Error(j.error || "Fehler");
   return j;
 }
-function toast(t){ const e = $("toast"); e.textContent = t; e.style.display = "block";
-  clearTimeout(toast.t); toast.t = setTimeout(() => e.style.display = "none", 8000); }
+function toast(t, info){ const e = $("toast"); e.textContent = t; e.style.display = "block";
+  e.style.background = info ? "var(--accent)" : ""; e.style.color = info ? "var(--card)" : "";
+  e.onclick = () => e.style.display = "none";
+  clearTimeout(toast.t); toast.t = setTimeout(() => e.style.display = "none", info ? 15000 : 8000); }
 async function act(path, body){ try{ show(await api(path, body)); }catch(e){ toast(e.message); } }
 
 function el(tag, cls, text){ const e = document.createElement(tag); if(cls) e.className = cls;
@@ -741,8 +771,10 @@ for(const t of document.querySelectorAll(".tab")) t.onclick = () => { tab = t.da
 $("auto").onchange = e => act("autostart", {on: e.target.checked});
 $("notifybtn").onclick = async () => { await Notification.requestPermission(); lastJson = ""; show(S); };
 $("reset").onclick = async () => {
-  if(!confirm("Alle Regeln dieser Firewall löschen und Windows wieder so einstellen, dass alles ins Internet darf?")) return;
-  try{ await api("reset", {}); bye("Alles zurückgesetzt."); }catch(e){ toast(e.message); } };
+  if(!confirm("Beide Listen leeren und alles freigeben? Die Firewall bleibt offen und steht danach auf „Aus“.")) return;
+  try{ const r = await api("reset", {}); show(r);
+    toast(r.report + " Programme, die vorher gesperrt waren, merken das oft erst, wenn man sie neu startet.", true);
+  }catch(e){ toast(e.message); } };
 $("quit").onclick = async () => {
   if(!confirm("Beenden? Dann darf wieder alles ins Internet, außer was auf deiner Sperrliste steht.")) return;
   try{ await api("quit", {}); }catch(e){} bye("Kleine Firewall wurde beendet. Es wird nichts Unbekanntes mehr gesperrt; deine Sperrliste gilt weiter."); };
@@ -812,9 +844,18 @@ def make_server(guard, token, port):
                     return self._send(200, {})
                 elif self.path == "/api/autostart":
                     guard.sys.set_autostart(bool(body.get("on")))
-                elif self.path in ("/api/reset", "/api/quit"):
-                    if self.path == "/api/reset":
-                        guard.reset()
+                elif self.path == "/api/reset":
+                    blocked, rules = guard.clear()
+                    data = self._state()
+                    if blocked is False and rules == 0:
+                        data["report"] = ("Listen geleert. Geprüft: Windows gibt alles frei, keine Regel dieser "
+                                          "Firewall ist mehr vorhanden.")
+                    else:
+                        data["report"] = ("Achtung, nicht vollständig geleert: Windows sperrt Unbekanntes: "
+                                          f"{ {True: 'ja', False: 'nein', None: 'unklar'}[blocked]}, "
+                                          f"verbliebene Regeln: {'unklar' if rules is None else rules}.")
+                    return self._send(200, data)
+                elif self.path == "/api/quit":
                     self._send(200, {})
                     guard.on_quit()
                     return
@@ -1297,6 +1338,8 @@ def selftest(path, guard, tray):
             return "verwaiste Regel entfernt"
 
         check("Regeln aufraeumen", purge)
+        check("Zustand lesen", lambda: ws.check() if ws.check() == (False, 0) else (_ for _ in ()).throw(
+            RuntimeError(str(ws.check()))))
         check("Sperren", lambda: (ws.set_policy(True), policy("BlockOutbound"))[1])
         check("Freigeben", lambda: (ws.set_policy(False), policy("AllowOutbound"))[1])
         check("Freigabe beim Hochfahren", boot_task)
@@ -1449,6 +1492,9 @@ def run():
                 system.set_autostart(True)
         except SysError:
             pass
+    if not system.demo:
+        threading.Thread(target=system.check, daemon=True).start()  # Ist-Zustand ins Protokoll
+    log(f"Modus {guard.state['mode']}, {len(guard.state['programs'])} Programme in den Listen")
     threading.Thread(target=guard.watch, daemon=True).start()
     on_windows = platform.system() == "Windows"
     tray = Tray(guard) if on_windows and (not system.demo or args.selbsttest) else None
