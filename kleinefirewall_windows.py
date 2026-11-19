@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 APP = "KleineFirewall"
-VERSION = "2.5"
+VERSION = "2.6"
 PORT = 47615
 TASK = "KleineFirewall"
 BOOT_TASK = "KleineFirewall-Freigabe"  # oeffnet beim Hochfahren, damit nie unbemerkt gesperrt ist
@@ -175,6 +175,13 @@ class WinSystem:
     def delete_rule(self, path):
         self.cmd(["netsh", "advfirewall", "firewall", "delete", "rule", f"name={rule_name(path)}"], check=False)
 
+    def purge_rules(self):
+        """Alle Regeln dieser Firewall entfernen - auch verwaiste aus frueheren Versionen oder Laeufen."""
+        code, out = self.cmd(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                              "$r = @(Get-NetFirewallRule -DisplayName 'KleineFirewall*' -ErrorAction SilentlyContinue); "
+                              "if ($r.Count) { $r | Remove-NetFirewallRule }; $r.Count"], check=False)
+        log(f"Regeln entfernt: {out.decode('oem', 'replace').strip()} (Code {code})")
+
     def svchost(self):
         return ntpath.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "svchost.exe")
 
@@ -299,8 +306,10 @@ class WinSystem:
         self.cmd(["schtasks", "/delete", "/tn", BOOT_TASK, "/f"], check=False)
         for path in paths:
             self.delete_rule(path)
-        self.cmd(["netsh", "advfirewall", "set", "allprofiles", "firewallpolicy",
-                  "blockinbound,allowoutbound"], check=False)
+        self.purge_rules()
+        code, out = self.cmd(["netsh", "advfirewall", "set", "allprofiles", "firewallpolicy",
+                              "blockinbound,allowoutbound"], check=False)
+        log(f"Freigabe beim Zuruecksetzen: Code {code} {out.decode('oem', 'replace').strip()[:200]}")
         self.cmd(["auditpol", "/set", f"/subcategory:{AUDIT_GUID}", "/failure:disable"], check=False)
         self.set_autostart(False)
 
@@ -331,6 +340,7 @@ class DemoSystem:
     def set_autostart(self, on): self._auto = on
     def reset(self, paths): pass
     def ensure_boot_task(self): pass
+    def purge_rules(self): pass
 
     def file_info(self, path):
         return {"firefox.exe": {"company": "Mozilla Corporation", "desc": "Firefox"},
@@ -396,11 +406,10 @@ class Guard:
                 self.pending.clear()
             active = mode != "off"  # "Aus": eigene Regeln ruhen, die Listen bleiben gespeichert
             if active != self.state.get("active", True):
-                for prog in self.state["programs"].values():
-                    if active:
+                self.sys.purge_rules()  # raeumt auch verwaiste Regeln weg
+                if active:
+                    for prog in self.state["programs"].values():
                         self.sys.add_rule(prog["path"], prog["action"], prog.get("dirs", ["out"]))
-                    else:
-                        self.sys.delete_rule(prog["path"])
                 self.state["active"] = active
             self.state["mode"] = mode
             self.save()
@@ -1278,6 +1287,16 @@ def selftest(path, guard, tray):
                 raise RuntimeError("Aufgabe nicht angelegt")
             return "angelegt und wieder entfernt"
 
+        def purge():
+            name = "KleineFirewall Selbsttest"
+            ws.cmd(["netsh", "advfirewall", "firewall", "add", "rule", f"name={name}", "dir=out", "action=block",
+                    "program=C:\\gibt-es-nicht.exe", "enable=yes"])
+            ws.purge_rules()
+            if ws.cmd(["netsh", "advfirewall", "firewall", "show", "rule", f"name={name}"], check=False)[0] == 0:
+                raise RuntimeError("Regel noch vorhanden")
+            return "verwaiste Regel entfernt"
+
+        check("Regeln aufraeumen", purge)
         check("Sperren", lambda: (ws.set_policy(True), policy("BlockOutbound"))[1])
         check("Freigeben", lambda: (ws.set_policy(False), policy("AllowOutbound"))[1])
         check("Freigabe beim Hochfahren", boot_task)
